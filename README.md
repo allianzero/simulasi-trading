@@ -23,7 +23,10 @@ Lalu buka http://localhost:8000 di browser.
   langkah sebelum eksekusi. Beli dibatasi saldo kas, jual dibatasi koin yang
   dimiliki.
 - **Futures:** posisi Long/Short dengan leverage 1x–100x (maksimal 100x),
-  harga likuidasi, PnL + ROE, dan likuidasi otomatis (lihat rumus di bawah).
+  harga likuidasi, PnL live + ROE, dan likuidasi otomatis (lihat rumus di bawah).
+  Setiap kartu posisi terbuka menampilkan PnL live (Rupiah + persen terhadap
+  margin, hijau kalau untung, merah kalau rugi) dan harga mark saat ini;
+  PnL ikut berubah setiap harga diperbarui (tiap 30 detik / tombol Refresh).
   Slider leverage ramah sentuhan (jempol besar 32px, area sentuh 44px),
   chip cepat 5x / 10x / 25x / 50x / 100x, dan tombol Buka Posisi selalu
   memberi umpan balik jelas: bila margin kosong atau tidak valid, muncul
@@ -66,6 +69,15 @@ posisi ditutup otomatis, margin hangus, dan tercatat di riwayat sebagai
 LIQUIDATED. Saat posisi ditutup manual, margin + PnL kembali ke saldo kas;
 PnL negatif dibatasi sampai −margin, jadi kas tidak bisa minus karena satu
 posisi.
+
+**PnL live & aturan offline:** PnL posisi TIDAK PERNAH dihitung dari harga
+contoh offline (harga contoh BTC Rp1.500.000.000 jauh dari harga live
+~Rp1.124.000.000 — pernah membuat posisi tes terlikuidasi). Saat harga live
+putus, PnL dibekukan di nilai terakhir dari harga live dengan label
+"(harga live terakhir)"; bila belum pernah ada harga live sama sekali, PnL
+ditampilkan "—". Aturan yang sama berlaku untuk PnL mengambang di total
+portofolio dan untuk pemeriksaan likuidasi — selama offline tidak ada posisi
+yang terlikuidasi oleh harga contoh.
 
 Contoh: margin Rp100.000, leverage 10x, Long BTC entry Rp1.000.000.000 →
 notional Rp1.000.000, likuidasi Rp900.000.000. Bila harga mark naik ke

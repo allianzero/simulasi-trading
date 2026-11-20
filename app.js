@@ -141,6 +141,10 @@ var state = activeProfile();
 var prices = {};
 var prevPrices = {};
 var pricesLive = false;
+/* Harga live TERAKHIR yang pernah diterima, per simbol — dipakai
+   sebagai harga mark "beku" untuk hitung PnL saat offline, supaya
+   PnL tidak pernah dihitung dari harga contoh. */
+var lastLivePrices = {};
 var lastUpdated = null;
 
 /* UI state */
@@ -241,6 +245,14 @@ function applyPrices(data, live) {
     }
   });
   pricesLive = live;
+  /* Simpan salinan harga live terakhir — hanya saat live, tidak
+     pernah dari harga contoh offline. */
+  if (live) {
+    lastLivePrices = {};
+    Object.keys(prices).forEach(function (sym) {
+      lastLivePrices[sym] = { idr: prices[sym].idr, change: prices[sym].change };
+    });
+  }
   lastUpdated = Date.now();
   updatePriceBadge();
   checkLiquidations();
@@ -321,14 +333,19 @@ function futPnl(pos, mark) {
   return (pos.entry - mark) / pos.entry * notional;
 }
 
-function futRoe(pos, mark) {
-  if (!pos.margin) return 0;
-  return futPnl(pos, mark) / pos.margin * 100;
-}
-
-function markPrice(symbol) {
-  var p = prices[symbol];
-  return p ? p.idr : null;
+/* Harga mark untuk hitung PnL posisi futures — TIDAK PERNAH memakai
+   harga contoh offline (harga contoh jauh dari harga live dan pernah
+   membuat posisi terlikuidasi). Saat live: harga live saat ini.
+   Saat offline: harga live TERAKHIR yang pernah diterima (beku,
+   frozen: true). Bila belum pernah ada harga live sama sekali:
+   null (PnL ditampilkan "—"). */
+function pnlMark(symbol) {
+  if (pricesLive) {
+    var p = prices[symbol];
+    return p ? { price: p.idr, frozen: false } : null;
+  }
+  var lp = lastLivePrices[symbol];
+  return lp ? { price: lp.idr, frozen: true } : null;
 }
 
 /* Periksa semua posisi terbuka setiap kali harga diperbarui.
@@ -338,8 +355,9 @@ function checkLiquidations() {
   if (!state || !state.futures.length) return;
   var doomed = [];
   state.futures.forEach(function (pos) {
-    var mark = markPrice(pos.symbol);
-    if (mark == null) return;
+    var m = pnlMark(pos.symbol);
+    if (!m) return;
+    var mark = m.price;
     var liq = futLiqPrice(pos.entry, pos.direction, pos.leverage);
     if ((pos.direction === "long" && mark <= liq) ||
         (pos.direction === "short" && mark >= liq)) {
@@ -361,8 +379,8 @@ function holdingValue(sym) {
 function futuresFloatPnl() {
   var total = 0;
   state.futures.forEach(function (pos) {
-    var mark = markPrice(pos.symbol);
-    if (mark != null) total += futPnl(pos, mark);
+    var m = pnlMark(pos.symbol);
+    if (m) total += Math.max(futPnl(pos, m.price), -pos.margin);
   });
   return total;
 }
@@ -1110,13 +1128,38 @@ function renderPositions() {
   list.innerHTML = "";
   if (!state.futures.length) {
     list.innerHTML = "<p class=\"empty-note\">Belum ada posisi futures.</p>";
+    window.__futuresPnl = [];
     return;
   }
+  /* Hook untuk pengujian otomatis (bukan bagian UI). */
+  var hook = [];
   state.futures.forEach(function (pos) {
-    var mark = markPrice(pos.symbol);
-    var pnl = mark != null ? futPnl(pos, mark) : 0;
-    var roe = futRoe(pos, mark != null ? mark : pos.entry);
+    var m = pnlMark(pos.symbol);
     var liq = futLiqPrice(pos.entry, pos.direction, pos.leverage);
+    var pnlHtml, markHtml;
+    if (m) {
+      /* PnL live, dibatasi maksimal −margin (aturan yang sama
+         seperti saat posisi ditutup). */
+      var pnl = Math.max(futPnl(pos, m.price), -pos.margin);
+      var roe = pos.margin ? pnl / pos.margin * 100 : 0;
+      var cls = pnl >= 0 ? "up" : "down";
+      pnlHtml =
+        '<span class="pos-pnl ' + cls + '">PnL ' + fmtSignedIDR(pnl) +
+        " (" + fmtPct(roe) + ")</span>" +
+        (m.frozen ? '<span class="pnl-frozen">(harga live terakhir)</span>' : "");
+      markHtml = fmtIDR(m.price) + (m.frozen ? " (harga live terakhir)" : "");
+      hook.push({ id: pos.id, symbol: pos.symbol, direction: pos.direction,
+        leverage: pos.leverage, margin: pos.margin, entry: pos.entry,
+        mark: m.price, frozen: m.frozen, pnl: pnl, roe: roe });
+    } else {
+      /* Belum pernah ada harga live — PnL tidak dihitung sama sekali,
+         jangan pakai harga contoh. */
+      pnlHtml = '<span class="pos-pnl">PnL —</span>';
+      markHtml = "—";
+      hook.push({ id: pos.id, symbol: pos.symbol, direction: pos.direction,
+        leverage: pos.leverage, margin: pos.margin, entry: pos.entry,
+        mark: null, frozen: false, pnl: null, roe: null });
+    }
     var row = document.createElement("div");
     row.className = "position-row";
     row.innerHTML =
@@ -1126,21 +1169,19 @@ function renderPositions() {
           pos.direction.toUpperCase() + "</span>" +
           '<strong>' + pos.symbol + " " + pos.leverage + "x</strong></span>" +
         '<span class="position-detail">' +
-          "entry " + fmtIDR(pos.entry) + " &middot; mark " + (mark != null ? fmtIDR(mark) : "—") +
+          "entry " + fmtIDR(pos.entry) + " &middot; mark " + markHtml +
           " &middot; likuidasi " + fmtIDR(liq) + "<br>" +
           "margin " + fmtIDR(pos.margin) + " &middot; notional " + fmtIDR(futNotional(pos.margin, pos.leverage)) +
         "</span>" +
       "</span>" +
-      '<span class="holding-value">' +
-        '<span class="pos-pnl ' + (pnl >= 0 ? "up" : "down") + '">' + fmtSignedIDR(pnl) + "</span>" +
-        '<span class="change ' + (roe >= 0 ? "up" : "down") + '">ROE ' + fmtPct(roe) + "</span>" +
-      "</span>" +
+      '<span class="holding-value">' + pnlHtml + "</span>" +
       '<button type="button" class="btn btn-danger btn-small" data-pos-id="' + pos.id + '">Tutup</button>';
     row.querySelector("[data-pos-id]").addEventListener("click", function () {
       closeFutures(pos.id, "manual");
     });
     list.appendChild(row);
   });
+  window.__futuresPnl = hook;
 }
 
 /* ---------------- Profil (Guest) ---------------- */
@@ -1324,8 +1365,8 @@ function closeFutures(posId, reason) {
   }
   if (idx < 0) return;
   var pos = state.futures[idx];
-  var mark = markPrice(pos.symbol);
-  if (mark == null) mark = pos.entry;
+  var m = pnlMark(pos.symbol);
+  var mark = m ? m.price : pos.entry;
   var pnl = futPnl(pos, mark);
   var pnlCapped = Math.max(pnl, -pos.margin);
   var returned = reason === "liquidated" ? 0 : pos.margin + pnlCapped;
