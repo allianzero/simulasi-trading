@@ -324,6 +324,73 @@ def test_offline_history(pw):
     finally:
         browser.close()
 
+def test_fetch_race(pw):
+    """Regresi: fetch harga basi TIDAK BOLEH menimpa harga live yang lebih
+    baru (pernah: fetch lama gagal lambat lalu menerapkan harga contoh di
+    atas harga live dari fetch baru — posisi Short bisa terlikuidasi
+    keliru karena mark melonjak ke harga contoh Rp1,5 Miliar)."""
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+    page.route("**/api.coingecko.com/**", lambda r: r.abort())
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.wait_for_timeout(1200)
+        check("fetch-race: awal offline (harga contoh)",
+              "CONTOH" in page.text_content("#priceBadgeText"))
+        # Pasang fetch tiruan: panggilan CoinGecko ke-1 gagal LAMBAT
+        # (2,5 dtk), ke-2 langsung live; Binance selalu gagal.
+        page.evaluate("""() => {
+          window.__origFetch = window.fetch.bind(window);
+          window.__cgCalls = 0;
+          var live = {bitcoin:{idr:1120000000,idr_24h_change:1.5},
+            ethereum:{idr:58000000,idr_24h_change:-0.8},
+            binancecoin:{idr:15000000,idr_24h_change:0.4},
+            solana:{idr:3000000,idr_24h_change:2.1},
+            ripple:{idr:36000,idr_24h_change:-1.1},
+            dogecoin:{idr:3200,idr_24h_change:0.3},
+            cardano:{idr:13000,idr_24h_change:-0.5},
+            tron:{idr:4800,idr_24h_change:0.9}};
+          window.fetch = function(url, opts) {
+            var u = String(url);
+            if (u.indexOf('simple/price') !== -1) {
+              window.__cgCalls++;
+              if (window.__cgCalls === 1) {
+                return new Promise(function(res, rej) {
+                  setTimeout(function() { rej(new Error('slow fail')); }, 2500);
+                });
+              }
+              return Promise.resolve(new Response(JSON.stringify(live),
+                {status: 200, headers: {'Content-Type': 'application/json'}}));
+            }
+            if (u.indexOf('binance') !== -1)
+              return Promise.reject(new Error('binance off'));
+            return window.__origFetch(url, opts);
+          };
+        }""")
+        page.evaluate("() => { fetchPrices(); }")   # fetch lama (A)
+        page.wait_for_timeout(300)
+        page.evaluate("() => { fetchPrices(); }")   # fetch baru (B)
+        page.wait_for_timeout(800)
+        check("fetch-race: fetch baru menerapkan harga live dulu",
+              "HARGA LIVE" in page.text_content("#priceBadgeText") and
+              "1.120.000.000" in page.text_content("#tradePrice"),
+              page.text_content("#priceBadgeText") + " | " + page.text_content("#tradePrice"))
+        page.wait_for_timeout(3000)  # fetch lama (A) selesai -> jatuh ke contoh
+        check("fetch-race: harga contoh dari fetch basi TIDAK menimpa harga live",
+              "HARGA LIVE" in page.text_content("#priceBadgeText") and
+              "1.120.000.000" in page.text_content("#tradePrice"),
+              page.text_content("#priceBadgeText") + " | " + page.text_content("#tradePrice"))
+        check("0 error JS (fetch-race)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -338,6 +405,8 @@ def main():
                 test_binance(pw)
             if which in ("history", "all"):
                 test_offline_history(pw)
+            if which in ("race", "all"):
+                test_fetch_race(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
