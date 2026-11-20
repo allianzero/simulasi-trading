@@ -453,6 +453,21 @@ function pnlMark(symbol) {
   return lp ? { price: lp.idr, frozen: true } : null;
 }
 
+/* Harga mark untuk menilai holding spot — pola yang sama seperti
+   pnlMark(): saat live pakai harga live saat ini, saat offline pakai
+   harga live TERAKHIR (beku), TIDAK PERNAH harga contoh. Sebelumnya
+   holdingValue() memakai prices[] mentah sehingga saat offline total
+   portofolio + nilai holding melonjak palsu (BTC Rp1,5 Miliar vs live
+   ~Rp1,12 Miliar: total Rp5.339.286 padahal seharusnya Rp5.000.000). */
+function spotMark(symbol) {
+  if (pricesLive) {
+    var p = prices[symbol];
+    return p ? { price: p.idr, frozen: false } : null;
+  }
+  var lp = lastLivePrices[symbol];
+  return lp ? { price: lp.idr, frozen: true } : null;
+}
+
 /* Periksa semua posisi terbuka setiap kali harga diperbarui.
    Bila harga mark menyentuh/melewati harga likuidasi, posisi
    ditutup otomatis dan margin hangus. */
@@ -476,9 +491,13 @@ function checkLiquidations() {
 
 function holdingValue(sym) {
   var h = state.holdings[sym];
-  var p = prices[sym];
-  if (!h || !p) return 0;
-  return h.amount * p.idr;
+  if (!h) return 0;
+  /* Nilai dari harga live / harga live terakhir (beku); bila belum
+     pernah ada harga live, jangan dinilai sama sekali (0) daripada
+     memakai harga contoh. */
+  var m = spotMark(sym);
+  if (!m) return 0;
+  return h.amount * m.price;
 }
 
 function futuresFloatPnl() {
@@ -1076,9 +1095,21 @@ function renderPortfolio() {
   pnlEl.textContent = fmtSignedIDR(pnl) + " (" + fmtPct(pnlPct) + ")";
   pnlEl.className = "stat-value " + (pnl > 0 ? "up" : pnl < 0 ? "down" : "");
   var fs = $("futuresSummary");
+  /* Saat offline, total + PnL dihitung dari harga live terakhir yang
+     dibekukan (bukan harga contoh) — beri tahu user supaya tidak
+     dikira harga live. */
+  var hasHoldings = Object.keys(state.holdings).some(function (s) {
+    return state.holdings[s].amount > 0;
+  });
+  var frozenNote = (!pricesLive && (hasHoldings || state.futures.length))
+    ? " Nilai dihitung dari harga live terakhir (beku), bukan harga contoh."
+    : "";
   if (state.futures.length) {
     fs.textContent = "Termasuk margin futures " + fmtIDR(futuresMarginTotal()) +
-      " + PnL mengambang " + fmtSignedIDR(futuresFloatPnl()) + ".";
+      " + PnL mengambang " + fmtSignedIDR(futuresFloatPnl()) + "." + frozenNote;
+    fs.hidden = false;
+  } else if (frozenNote) {
+    fs.textContent = "Nilai portofolio dihitung dari harga live terakhir (beku), bukan harga contoh.";
     fs.hidden = false;
   } else {
     fs.hidden = true;
@@ -1098,10 +1129,10 @@ function renderHoldings() {
   syms.forEach(function (sym) {
     var h = state.holdings[sym];
     var a = assetOf(sym);
-    var p = prices[sym];
-    var cur = p ? h.amount * p.idr : 0;
+    var m = spotMark(sym);
+    var cur = m ? h.amount * m.price : null;
     var cost = h.amount * h.avgPrice;
-    var pnl = cur - cost;
+    var pnl = cur === null ? null : cur - cost;
     var row = document.createElement("div");
     row.className = "holding-row";
     row.innerHTML =
@@ -1112,9 +1143,10 @@ function renderHoldings() {
           "harga beli rata-rata " + fmtIDR(h.avgPrice) + "</span>" +
       "</span>" +
       '<span class="holding-value">' +
-        '<span class="value">' + fmtIDR(cur) + "</span>" +
-        '<span class="change ' + (pnl >= 0 ? "up" : "down") + '">' +
-          fmtSignedIDR(pnl) + "</span>" +
+        '<span class="value">' + (cur === null ? "—" : fmtIDR(cur)) + "</span>" +
+        '<span class="change ' + (pnl === null ? "" : pnl >= 0 ? "up" : "down") + '">' +
+          (pnl === null ? "—" : fmtSignedIDR(pnl)) + "</span>" +
+        (m && m.frozen ? '<span class="pnl-frozen">(harga live terakhir)</span>' : "") +
       "</span>";
     list.appendChild(row);
   });
