@@ -391,6 +391,74 @@ def test_fetch_race(pw):
     finally:
         browser.close()
 
+def test_reload_offline_close(pw):
+    """Regresi: tutup posisi futures SETELAH reload halaman saat offline
+    HARUS memakai harga live terakhir yang tersimpan (beku), bukan harga
+    entry. Pernah: lastLivePrices hanya di memori -> setelah reload
+    pnlMark() = null -> tutup memakai entry, PnL 0, margin kembali penuh
+    (rugi -Rp62.500 hilang begitu saja)."""
+    mode = {"offline": False}
+    price = {"live": dict(LIVE)}
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        if mode["offline"]:
+            route.abort()
+        elif "simple/price" in route.request.url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(price["live"]))
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.wait_for_timeout(1000)
+        page.click('.lev-chip[data-lev="10"]')
+        page.fill("#futMarginInput", "100000")
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        page.click("#futConfirmYes")
+        page.wait_for_timeout(500)
+        check("reload-close: posisi Long 10x terbuka", "4.900.000" in cash_text(page),
+              cash_text(page))
+        price["live"] = dict(LIVE)
+        price["live"]["bitcoin"] = {"idr": 1050000000, "idr_24h_change": -6.25}
+        page.click("#refreshBtn")
+        page.wait_for_timeout(2000)
+        hook_before = page.evaluate("window.__futuresPnl")
+        check("reload-close: PnL -Rp62.500 sebelum reload",
+              hook_before and hook_before[0]["pnl"] == -62500,
+              str(hook_before))
+        mode["offline"] = True
+        page.reload()
+        page.wait_for_timeout(2500)
+        check("reload-close: badge OFFLINE setelah reload",
+              "CONTOH" in page.text_content("#priceBadgeText"))
+        hook_after = page.evaluate("window.__futuresPnl")
+        check("reload-close: PnL beku -Rp62.500 tetap tampil setelah reload",
+              hook_after and hook_after[0]["pnl"] == -62500 and hook_after[0]["frozen"]
+              and hook_after[0]["mark"] == 1050000000,
+              str(hook_after))
+        page.locator("#futPositions [data-pos-id]").first.click()
+        page.wait_for_timeout(800)
+        check("reload-close: kas Rp4.937.500 (margin - rugi), bukan Rp5.000.000",
+              "4.937.500" in cash_text(page), cash_text(page))
+        hist = page.text_content("#tradeHistory")
+        check("reload-close: riwayat tutup @ Rp1.050.000.000, PnL -Rp62.500",
+              "1.050.000.000" in hist and "62.500" in hist, hist[:200])
+        check("0 error JS (reload-close)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -407,6 +475,8 @@ def main():
                 test_offline_history(pw)
             if which in ("race", "all"):
                 test_fetch_race(pw)
+            if which in ("reload", "all"):
+                test_reload_offline_close(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
