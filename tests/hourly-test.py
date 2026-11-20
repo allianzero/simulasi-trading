@@ -459,6 +459,67 @@ def test_reload_offline_close(pw):
     finally:
         browser.close()
 
+def test_chart_429(pw):
+    """Regresi: market_chart CoinGecko 429 padahal harga simple/price LIVE.
+    Pernah: grafik 24j jatuh ke deret contoh berjangkar harga contoh
+    (BTC Rp1,5 Miliar, titik awal ~Rp1,46 Miliar) sementara badge
+    HARGA LIVE — label "Grafik contoh (offline)" kontradiktif dan garis
+    mark live terpisah jauh dari grafik. Kini deret cadangan dijangkar
+    pada harga live (estimasi) dan dicoba ulang sampai data asli pulih."""
+    chart_ok = {"ok": False}
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        url = route.request.url
+        if "simple/price" in url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in url:
+            if chart_ok["ok"]:
+                mock_chart(route)
+            else:
+                route.fulfill(status=429, content_type="application/json",
+                              body=json.dumps({"status": {"error_code": 429}}))
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.wait_for_function("() => window.__priceChart && window.__priceChart.estimated",
+                               timeout=15000)
+        check("chart-429: badge HARGA LIVE walau market_chart 429",
+              "HARGA LIVE" in page.text_content("#priceBadgeText"),
+              page.text_content("#priceBadgeText"))
+        pts = page.evaluate("() => { const h = window.priceHistory.BTC; "
+                            "return {first: h.points[0].v, last: h.points[h.points.length-1].v}; }")
+        check("chart-429: deret estimasi berjangkar harga live (bukan contoh Rp1,5 M)",
+              1000000000 < pts["first"] < 1200000000 and
+              abs(pts["last"] - 1120000000) < 1120000000 * 0.01,
+              str(pts))
+        note = page.text_content("#priceChartNote")
+        check("chart-429: label 'estimasi', bukan 'contoh (offline)'",
+              "estimasi" in note.lower() and "contoh (offline)" not in note.lower(),
+              note)
+        # Rate limit reda -> grafik asli harus pulih sendiri via retry berkala.
+        chart_ok["ok"] = True
+        page.wait_for_function("() => window.__priceChart && window.__priceChart.live",
+                               timeout=120000)
+        note2 = page.text_content("#priceChartNote")
+        check("chart-429: grafik live pulih setelah rate limit reda",
+              "CoinGecko" in note2 and "estimasi" not in note2.lower(), note2)
+        check("0 error JS (chart-429)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -477,6 +538,8 @@ def main():
                 test_fetch_race(pw)
             if which in ("reload", "all"):
                 test_reload_offline_close(pw)
+            if which in ("chart429", "all"):
+                test_chart_429(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
