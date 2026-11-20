@@ -354,6 +354,21 @@ async function fetchPricesBinance() {
   return data;
 }
 
+/* Respons harga live harus LENGKAP (8 koin, semua idr angka > 0).
+   Pernah: CoinGecko mengembalikan sebagian koin saja (mis. SOL hilang)
+   lalu applyPrices tetap mengklaim HARGA LIVE — koin yang hilang
+   dinilai Rp0 (total portofolio anjlok palsu dan snapshot grafik ikut
+   mencatat nilai palsu) dan pemeriksaan likuidasi posisinya dilewati.
+   Respons tidak lengkap = gagal: coba Binance, lalu harga contoh. */
+function isCompletePriceData(data) {
+  if (!data || typeof data !== "object") return false;
+  for (var i = 0; i < ASSETS.length; i++) {
+    var d = data[ASSETS[i].id];
+    if (!d || typeof d.idr !== "number" || !isFinite(d.idr) || d.idr <= 0) return false;
+  }
+  return true;
+}
+
 async function fetchPrices() {
   /* Nomor urut fetch — hanya fetch TERBARU yang boleh menerapkan
      hasilnya. Tanpa ini, dua fetch yang tumpang tindih (interval 30 detik
@@ -365,7 +380,7 @@ async function fetchPrices() {
   setBadgeLoading();
   try {
     var data = await fetchJsonTimeout(COINGECKO_URL, 10000);
-    if (!data || !data.bitcoin || typeof data.bitcoin.idr !== "number") {
+    if (!isCompletePriceData(data)) {
       throw new Error("Respons CoinGecko tidak lengkap");
     }
     if (mySeq === priceFetchSeq) applyPrices(data, true);
