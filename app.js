@@ -836,8 +836,14 @@ function drawPriceChart() {
   ctx.clearRect(0, 0, w, hh);
 
   /* Garis horizontal: entry + likuidasi tiap posisi terbuka koin
-     ini, plus harga mark saat ini. */
-  var mark = currentPrice();
+     ini, plus harga mark saat ini. Harga mark JANGAN dari
+     currentPrice() mentah — saat offline itu harga contoh (BTC
+     Rp1,5 Miliar) sehingga garis Mark melonjak ke harga contoh dan
+     merusak skala sumbu grafik. Pakai pnlMark(): harga live saat
+     live, harga live terakhir (beku) saat offline, null bila belum
+     pernah ada harga live (garis tidak digambar). */
+  var markInfo = pnlMark(selectedSymbol);
+  var mark = markInfo ? markInfo.price : null;
   var openPositions = state
     ? state.futures.filter(function (pos) { return pos.symbol === selectedSymbol; })
     : [];
@@ -859,7 +865,9 @@ function drawPriceChart() {
   });
   if (mark != null && !hasEntryAtMark) {
     lines.push({ type: "mark", price: mark,
-      label: "Mark " + fmtIDR(mark), color: "#eaecef", dashed: true });
+      label: "Mark " + fmtIDR(mark) +
+        (markInfo && markInfo.frozen ? " (harga live terakhir)" : ""),
+      color: "#eaecef", dashed: true });
   }
 
   /* Hook untuk pengujian otomatis (bukan bagian UI). */
