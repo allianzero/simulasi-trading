@@ -244,6 +244,7 @@ function applyPrices(data, live) {
   lastUpdated = Date.now();
   updatePriceBadge();
   checkLiquidations();
+  appendPricePoint();
   snapshotPortfolio();
   renderAll();
 }
@@ -535,6 +536,305 @@ function drawChart() {
   ctx.fillText(fmtIDR(lastV), right - 2, Math.max(14, ly - 10));
 }
 
+/* ---------------- Grafik harga koin ---------------- */
+
+/* Riwayat harga per koin — HANYA di memori, TIDAK disimpan ke
+   localStorage, jadi skema penyimpanan/profil tidak berubah.
+   priceHistory[symbol] = { points: [{t, v}], live: bool,
+   loading: bool, fetchedAt: ms|null }.
+   Sumber: CoinGecko market_chart 24 jam (gratis, tanpa API key).
+   Bila gagal/offline: deret contoh sintetis dari harga contoh,
+   SELALU diberi label offline di UI. */
+var priceHistory = {};
+
+function chartUrlFor(assetId) {
+  return "https://api.coingecko.com/api/v3/coins/" + assetId +
+    "/market_chart?vs_currency=idr&days=1";
+}
+
+/* Random deterministik (mulberry32) agar deret contoh stabil
+   selama satu kali muat halaman. */
+function seededRandom(seed) {
+  var a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* Deret contoh 24 jam: random walk dari harga 24 jam lalu
+   (dihitung dari harga contoh + perubahan 24 jam) menuju harga
+   contoh saat ini. BUKAN harga pasar — hanya pengisi grafik
+   saat offline, dan selalu berlabel offline. */
+function syntheticSeries(symbol) {
+  var s = SAMPLE_PRICES[symbol];
+  if (!s) return [];
+  var now = Date.now();
+  var start = s.idr / (1 + s.change / 100);
+  var n = 97; /* tiap 15 menit selama 24 jam */
+  var rnd = seededRandom(symbol.charCodeAt(0) * 7919 + symbol.charCodeAt(1) * 104729);
+  var pts = [];
+  var drift = (s.idr - start) / (n - 1);
+  var vol = Math.abs(s.idr) * 0.004;
+  var v = start;
+  for (var i = 0; i < n; i++) {
+    var target = start + drift * i;
+    v += (target - v) * 0.25 + (rnd() - 0.5) * vol;
+    pts.push({ t: now - (n - 1 - i) * 15 * 60 * 1000, v: Math.max(v, s.idr * 0.5) });
+  }
+  pts[n - 1].v = s.idr;
+  return pts;
+}
+
+/* Ambil grafik 24 jam untuk satu koin. Di-cache per koin di memori
+   (tidak di-fetch ulang bila datanya masih segar < 10 menit). */
+async function fetchPriceChart(symbol) {
+  var a = assetOf(symbol);
+  if (!a) return;
+  var h = priceHistory[symbol];
+  if (h && h.loading) return;
+  if (h && h.fetchedAt && Date.now() - h.fetchedAt < 10 * 60 * 1000 && h.points.length > 10) {
+    drawPriceChart();
+    return;
+  }
+  if (!h) {
+    h = { points: [], live: false, loading: false, fetchedAt: null };
+    priceHistory[symbol] = h;
+  }
+  h.loading = true;
+  drawPriceChart();
+  var controller = new AbortController();
+  var timer = setTimeout(function () { controller.abort(); }, 10000);
+  try {
+    var res = await fetch(chartUrlFor(a.id), { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var data = await res.json();
+    var pts = (data.prices || []).filter(function (p) {
+      return Array.isArray(p) && isFinite(p[0]) && isFinite(p[1]) && p[1] > 0;
+    }).map(function (p) { return { t: p[0], v: p[1] }; });
+    if (pts.length < 2) throw new Error("Data grafik kosong");
+    h.points = pts;
+    h.live = true;
+    h.fetchedAt = Date.now();
+  } catch (e) {
+    clearTimeout(timer);
+    h.points = syntheticSeries(symbol);
+    h.live = false;
+    h.fetchedAt = Date.now();
+  }
+  h.loading = false;
+  drawPriceChart();
+}
+
+/* Tambahkan harga live terbaru ke grafik setiap kali harga
+   diperbarui (poll 30 detik). Hanya saat harga live — saat
+   offline deret contoh tetap apa adanya. */
+function appendPricePoint() {
+  if (!pricesLive) return;
+  var h = priceHistory[selectedSymbol];
+  if (!h || !h.points.length) return;
+  var p = currentPrice();
+  if (p == null) return;
+  var last = h.points[h.points.length - 1];
+  if (Date.now() - last.t < 20000 && Math.abs(last.v - p) < p * 0.0001) return;
+  h.points.push({ t: Date.now(), v: p });
+  if (h.points.length > 400) h.points = h.points.slice(-400);
+}
+
+function drawPriceChart() {
+  var canvas = $("priceChart");
+  var note = $("priceChartNote");
+  var symEl = $("priceChartSymbol");
+  if (!canvas) return;
+  var a = assetOf(selectedSymbol);
+  if (symEl) symEl.textContent = selectedSymbol;
+  var h = priceHistory[selectedSymbol];
+  var ctx = canvas.getContext("2d");
+  var dpr = window.devicePixelRatio || 1;
+  var w = canvas.clientWidth || 800;
+  var hh = canvas.clientHeight || 200;
+  canvas.width = w * dpr;
+  canvas.height = hh * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, hh);
+
+  /* Garis horizontal: entry + likuidasi tiap posisi terbuka koin
+     ini, plus harga mark saat ini. */
+  var mark = currentPrice();
+  var openPositions = state
+    ? state.futures.filter(function (pos) { return pos.symbol === selectedSymbol; })
+    : [];
+  var lines = [];
+  openPositions.forEach(function (pos) {
+    var liq = futLiqPrice(pos.entry, pos.direction, pos.leverage);
+    lines.push({ type: "entry", price: pos.entry,
+      label: "Entry " + pos.direction.toUpperCase() + " " + pos.leverage + "x " + fmtIDR(pos.entry),
+      color: pos.direction === "long" ? "#0ecb81" : "#f6465d", dashed: false });
+    lines.push({ type: "liq", price: liq,
+      label: "Likuidasi " + fmtIDR(liq),
+      color: "#f6465d", dashed: true });
+  });
+  /* Garis mark tidak digambar bila berimpit dengan garis entry
+     (harga mark = harga entry saat posisi baru dibuka) agar label
+     tidak saling menumpuk. */
+  var hasEntryAtMark = mark != null && openPositions.some(function (pos) {
+    return Math.abs(pos.entry - mark) < mark * 0.0001;
+  });
+  if (mark != null && !hasEntryAtMark) {
+    lines.push({ type: "mark", price: mark,
+      label: "Mark " + fmtIDR(mark), color: "#eaecef", dashed: true });
+  }
+
+  /* Hook untuk pengujian otomatis (bukan bagian UI). */
+  window.__priceChart = {
+    symbol: selectedSymbol,
+    points: h ? h.points.length : 0,
+    live: !!(h && h.live),
+    loading: !!(h && h.loading),
+    lines: lines.map(function (l) { return { type: l.type, price: l.price }; })
+  };
+
+  if (!h || h.loading) {
+    if (note) note.textContent = "Memuat grafik harga " + selectedSymbol + "…";
+    ctx.fillStyle = "#848e9c";
+    ctx.font = "13px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Memuat grafik…", w / 2, hh / 2);
+    return;
+  }
+  var pts = h.points;
+  if (note) {
+    note.textContent = h.live
+      ? "Grafik harga " + (a ? a.name : selectedSymbol) + " 24 jam terakhir dari CoinGecko — diperbarui tiap 30 detik."
+      : "Grafik contoh (offline) — harga bukan harga pasar sebenarnya.";
+  }
+  if (!pts.length) {
+    ctx.fillStyle = "#848e9c";
+    ctx.font = "13px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Belum ada data grafik.", w / 2, hh / 2);
+    return;
+  }
+
+  var values = pts.map(function (p) { return p.v; });
+  lines.forEach(function (l) { values.push(l.price); });
+  var min = Math.min.apply(null, values);
+  var max = Math.max.apply(null, values);
+  if (max === min) { max = min + 1; }
+  var pad = Math.max((max - min) * 0.15, Math.abs(max) * 0.01, 1);
+  min -= pad; max += pad;
+
+  var left = 62, right = w - 10, top = 14, bottom = hh - 26;
+  function x(t) {
+    var t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+    if (t1 === t0) return (left + right) / 2;
+    return left + ((t - t0) / (t1 - t0)) * (right - left);
+  }
+  function y(v) { return bottom - ((v - min) / (max - min)) * (bottom - top); }
+
+  /* Grid horizontal + label sumbu */
+  ctx.font = "10px 'IBM Plex Mono', monospace";
+  ctx.textAlign = "left";
+  for (var g = 0; g <= 4; g++) {
+    var gv = min + (max - min) * (g / 4);
+    var gy = y(gv);
+    ctx.strokeStyle = "rgba(132, 142, 156, 0.13)";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(left, gy); ctx.lineTo(right, gy); ctx.stroke();
+    ctx.fillStyle = "#5e6673";
+    ctx.fillText(fmtCompact(gv), 4, gy + 3);
+  }
+
+  /* Garis entry / likuidasi / mark + labelnya (label digeser bila
+     dua garis berdekatan agar tidak saling menumpuk). */
+  var usedLabelY = [];
+  lines.forEach(function (l) {
+    var ly = y(l.price);
+    ctx.strokeStyle = l.color;
+    ctx.globalAlpha = l.type === "mark" ? 0.55 : 0.85;
+    ctx.setLineDash(l.dashed ? [5, 4] : []);
+    ctx.lineWidth = 1.25;
+    ctx.beginPath(); ctx.moveTo(left, ly); ctx.lineTo(right, ly); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    var labelY = Math.max(2, ly - 18);
+    var guard = 0;
+    while (usedLabelY.some(function (uy) { return Math.abs(uy - labelY) < 15; }) && guard < 6) {
+      labelY = Math.max(2, labelY - 16);
+      guard++;
+    }
+    usedLabelY.push(labelY);
+    ctx.font = "10px Inter, sans-serif";
+    var tw = ctx.measureText(l.label).width;
+    ctx.fillStyle = "rgba(11, 14, 17, 0.78)";
+    roundRectPath(ctx, left + 4, labelY, tw + 12, 15, 7);
+    ctx.fill();
+    ctx.fillStyle = l.color;
+    ctx.fillText(l.label, left + 10, labelY + 11);
+  });
+
+  /* Garis harga + isi gradien */
+  var up = pts[pts.length - 1].v >= pts[0].v;
+  var color = (a && a.color) || (up ? "#0ecb81" : "#f6465d");
+  ctx.beginPath();
+  ctx.moveTo(x(pts[0].t), y(pts[0].v));
+  for (var i = 1; i < pts.length; i++) {
+    var mx = (x(pts[i - 1].t) + x(pts[i].t)) / 2;
+    var my = (y(pts[i - 1].v) + y(pts[i].v)) / 2;
+    ctx.quadraticCurveTo(x(pts[i - 1].t), y(pts[i - 1].v), mx, my);
+  }
+  ctx.lineTo(x(pts[pts.length - 1].t), y(pts[pts.length - 1].v));
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke();
+  ctx.lineTo(x(pts[pts.length - 1].t), bottom);
+  ctx.lineTo(x(pts[0].t), bottom);
+  ctx.closePath();
+  var grad = ctx.createLinearGradient(0, top, 0, bottom);
+  grad.addColorStop(0, up ? "rgba(14,203,129,0.25)" : "rgba(246,70,93,0.25)");
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  /* Label waktu: titik awal memakai tanggal+jam (24 jam lalu = jam
+     yang sama dengan sekarang), titik akhir cukup jam. */
+  ctx.fillStyle = "#5e6673";
+  ctx.font = "10px 'IBM Plex Mono', monospace";
+  ctx.textAlign = "left";
+  ctx.fillText(fmtTime(pts[0].t), left, hh - 8);
+  ctx.textAlign = "right";
+  ctx.fillText(fmtClock(pts[pts.length - 1].t), right, hh - 8);
+  var lastV = pts[pts.length - 1].v;
+  var lx = x(pts[pts.length - 1].t), ly2 = y(lastV);
+  ctx.beginPath(); ctx.arc(lx, ly2, 5.5, 0, Math.PI * 2);
+  ctx.fillStyle = "#eaecef"; ctx.fill();
+  ctx.beginPath(); ctx.arc(lx, ly2, 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.fillStyle = "#eaecef";
+  ctx.font = "bold 12px 'IBM Plex Mono', monospace";
+  ctx.textAlign = "right";
+  /* Label harga terakhir: coba beberapa posisi (di atas / di bawah
+     titik) dan pakai yang pertama tidak bertabrakan dengan label
+     garis entry/likuidasi. */
+  var lastLabelY = Math.max(14, ly2 - 10);
+  var lastLabelCandidates = [ly2 - 10, ly2 + 24, ly2 - 26, ly2 + 40, ly2 - 42];
+  for (var ci = 0; ci < lastLabelCandidates.length; ci++) {
+    var cand = lastLabelCandidates[ci];
+    if (cand < 12 || cand > hh - 8) continue;
+    var clash = usedLabelY.some(function (uy) {
+      return cand - 11 < uy + 18 && cand + 4 > uy - 3;
+    });
+    lastLabelY = cand;
+    if (!clash) break;
+  }
+  ctx.fillText(fmtIDR(lastV), right - 2, lastLabelY);
+}
+
 /* ---------------- Render ---------------- */
 
 function renderAll() {
@@ -548,6 +848,7 @@ function renderAll() {
   renderPositions();
   renderProfileUI();
   drawChart();
+  drawPriceChart();
 }
 
 function renderMarket() {
@@ -596,6 +897,7 @@ function renderMarket() {
       hideConfirm();
       hideFutConfirm();
       renderAll();
+      fetchPriceChart(selectedSymbol);
       $("amountInput").focus();
     });
     list.appendChild(row);
@@ -787,8 +1089,15 @@ function renderFuturesPanel() {
 
 function showFutError(msg) {
   var el = $("futError");
-  if (msg) { el.textContent = msg; el.hidden = false; }
-  else { el.hidden = true; }
+  if (msg) {
+    el.textContent = msg; el.hidden = false;
+    /* Guncang + gulir ke pesan agar di HP jelas terlihat bahwa
+       tombol ditekan tapi ada yang kurang (bukan tombol mati). */
+    el.classList.remove("shake");
+    void el.offsetWidth;
+    el.classList.add("shake");
+    el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  } else { el.hidden = true; }
 }
 
 function hideFutConfirm() {
@@ -1178,6 +1487,11 @@ function setLeverage(lev) {
 $("futLeverage").addEventListener("input", function () {
   setLeverage(parseInt($("futLeverage").value, 10));
 });
+/* "change" sebagai cadangan: sebagian browser HP hanya menembakkan
+   event ini saat jempol slider dilepas. setLeverage idempotent. */
+$("futLeverage").addEventListener("change", function () {
+  setLeverage(parseInt($("futLeverage").value, 10));
+});
 $("levChips").addEventListener("click", function (e) {
   var btn = e.target.closest("[data-lev]");
   if (!btn) return;
@@ -1189,8 +1503,14 @@ $("futMarginInput").addEventListener("input", function () {
 
 $("futBtn").addEventListener("click", function () {
   var res = computeFutures();
-  if (!res) { showFutError("Masukkan margin dulu."); return; }
-  if (!res.ok) { showFutError(res.msg); return; }
+  if (!res) {
+    /* Margin kosong: beri umpan balik ganda (teks merah + toast)
+       agar tombol tidak terasa "mati" saat ditekan. */
+    showFutError("Masukkan margin dulu — contoh: Rp100.000.");
+    showToast("Masukkan margin dulu — contoh: Rp100.000.", "error");
+    return;
+  }
+  if (!res.ok) { showFutError(res.msg); showToast(res.msg, "error"); return; }
   showFutError(null);
   var dirTxt = futDirection === "long" ? "Long" : "Short";
   $("futConfirmText").innerHTML =
@@ -1229,7 +1549,7 @@ $("resetBtn").addEventListener("click", function () {
 
 $("refreshBtn").addEventListener("click", function () { fetchPrices(); });
 
-window.addEventListener("resize", drawChart);
+window.addEventListener("resize", function () { drawChart(); drawPriceChart(); });
 
 /* Profil & layar sambutan */
 $("profileBtn").addEventListener("click", function (e) {
@@ -1277,6 +1597,7 @@ $("guestNameInput").addEventListener("keydown", function (e) {
 
 renderAll();
 fetchPrices();
+fetchPriceChart(selectedSymbol);
 setInterval(fetchPrices, REFRESH_MS);
 if (store.profiles.length === 0) {
   $("welcomeOverlay").hidden = false;

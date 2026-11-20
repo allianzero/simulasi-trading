@@ -24,6 +24,18 @@ Lalu buka http://localhost:8000 di browser.
   dimiliki.
 - **Futures:** posisi Long/Short dengan leverage 1x–100x (maksimal 100x),
   harga likuidasi, PnL + ROE, dan likuidasi otomatis (lihat rumus di bawah).
+  Slider leverage ramah sentuhan (jempol besar 32px, area sentuh 44px),
+  chip cepat 5x / 10x / 25x / 50x / 100x, dan tombol Buka Posisi selalu
+  memberi umpan balik jelas: bila margin kosong atau tidak valid, muncul
+  pesan error yang diguncang + digulir ke layar, beserta toast.
+- **Grafik harga koin (24 jam):** di seksi Futures, grafik harga koin yang
+  dipilih dari CoinGecko `market_chart` (24 jam, IDR) dan ikut bergerak
+  setiap harga live diperbarui (tiap 30 detik). Saat ada posisi futures
+  terbuka untuk koin itu, grafik menampilkan garis harga entry (hijau untuk
+  Long, merah untuk Short), garis harga likuidasi (merah putus-putus), dan
+  garis harga mark saat ini (putus-putus). Bila CoinGecko tidak terjangkau,
+  grafik memakai deret contoh sintetis dan diberi label tegas
+  "Grafik contoh (offline)".
 - **Akun Guest:** sampai 5 profil, masing-masing dengan data simulasi sendiri
   (kas, kepemilikan spot, posisi futures, riwayat, grafik). Tanpa password,
   tanpa daftar, tanpa server.
@@ -76,6 +88,12 @@ lama tanpa profil) otomatis dipindahkan menjadi profil pertama bernama
 
 - Harga: `https://api.coingecko.com/api/v3/simple/price?...&vs_currencies=idr&include_24hr_change=true`
   (CoinGecko public API, gratis, tanpa key; ada batas rate API publik).
+- Grafik harga koin: `https://api.coingecko.com/api/v3/coins/{id}/market_chart?vs_currency=idr&days=1`
+  (gratis, tanpa key). Diambil sekali per koin lalu di-cache di memori
+  (tidak disimpan ke localStorage); harga terbaru ditambahkan ke grafik
+  setiap poll harga 30 detik. Bila fetch gagal, grafik memakai deret contoh
+  sintetis (random walk dari harga contoh) dan diberi label tegas
+  "Grafik contoh (offline)".
 - **Jika fetch gagal (offline / CoinGecko tidak terjangkau):** aplikasi memakai
   harga contoh dan menampilkannya dengan label tegas
   **"HARGA CONTOH (OFFLINE)"** — harga contoh tidak pernah disajikan
