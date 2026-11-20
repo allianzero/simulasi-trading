@@ -741,6 +741,87 @@ def test_sell_max(pw):
     finally:
         browser.close()
 
+def test_partial_coingecko(pw):
+    """Regresi: respons CoinGecko TIDAK LENGKAP (satu koin hilang).
+    Pernah: CoinGecko mengembalikan 7 dari 8 koin (SOL hilang) lalu
+    applyPrices tetap mengklaim HARGA LIVE — SOL dinilai Rp0 (total
+    portofolio anjlok palsu Rp5.000.000 -> Rp3.500.000, snapshot grafik
+    ikut mencatat nilai palsu) dan likuidasi posisi SOL dilewati.
+    Kini fetchPrices menolak respons tidak lengkap: coba Binance, lalu
+    harga contoh — total beku di harga live terakhir, bukan Rp0."""
+    import urllib.parse
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        # Beli SOL Rp1.500.000 @ Rp3.000.000 = 0,5 SOL
+        page.locator("#marketList .market-row", has_text="Solana").click()
+        page.wait_for_timeout(500)
+        page.fill("#amountInput", "1500000")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function(
+            "() => document.getElementById('cashBalance').textContent.includes('3.500.000')",
+            timeout=5000)
+        # CoinGecko parsial (SOL hilang), Binance gagal -> harus OFFLINE
+        partial = {k: v for k, v in LIVE.items() if k != "solana"}
+        def cg_partial(route):
+            url = route.request.url
+            if "simple/price" in url:
+                route.fulfill(status=200, content_type="application/json",
+                              body=json.dumps(partial))
+            elif "market_chart" in url:
+                mock_chart(route)
+            else:
+                route.abort()
+        page.route("**/api.coingecko.com/**", cg_partial)
+        page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+        page.route("**/api.binance.com/**", lambda r: r.abort())
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent.includes('CONTOH')",
+            timeout=15000)
+        page.wait_for_timeout(500)
+        check("partial-cg: badge OFFLINE, bukan klaim HARGA LIVE palsu",
+              "CONTOH" in page.text_content("#priceBadgeText"),
+              page.text_content("#priceBadgeText"))
+        check("partial-cg: total BEKU Rp5.000.000, bukan Rp3.500.000 (SOL = Rp0)",
+              "5.000.000" in page.text_content("#totalValue"),
+              page.text_content("#totalValue"))
+        hold = page.text_content("#holdingsList") or ""
+        check("partial-cg: holding SOL beku Rp1.500.000 + label harga live terakhir",
+              "1.500.000" in hold and "harga live terakhir" in hold, hold.replace("\n", " ")[:160])
+        hist = page.evaluate(
+            "() => JSON.parse(localStorage.getItem('simulasi-trading-v2'))"
+            ".profiles[0].history.map(h => h.v)")
+        check("partial-cg: snapshot grafik TIDAK mencatat Rp3.500.000 palsu",
+              3500000 not in hist, hist)
+        # Binance pulih -> harga live lagi dari cadangan (SOL dari Binance)
+        def bin_ok(route):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(route.request.url).query)
+            syms = json.loads(q.get("symbols", ["[]"])[0])
+            out = [{"symbol": s, "lastPrice": str(BINANCE_USDT[s]),
+                    "priceChangePercent": str(BINANCE_CHG[s])} for s in syms]
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(out))
+        page.route("**/data-api.binance.vision/**", bin_ok)
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=15000)
+        sol_row = page.locator(
+            "#marketList .market-row", has_text="Solana").inner_text()
+        check("partial-cg: Binance cadangan pulih, SOL live dari Binance "
+              "(92,10 x 16350 = Rp1.505.835)",
+              "1.505.835" in sol_row, sol_row.replace("\n", " "))
+        check("0 error JS (partial-cg)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -767,6 +848,8 @@ def main():
                 test_chart_429(pw)
             if which in ("chartmark", "all"):
                 test_chart_mark_offline(pw)
+            if which in ("partial", "all"):
+                test_partial_coingecko(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
