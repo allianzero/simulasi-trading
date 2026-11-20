@@ -367,6 +367,70 @@ def test_offline_history(pw):
     finally:
         browser.close()
 
+def test_spot_offline_frozen_value(pw):
+    """Regresi: nilai portofolio + holding spot TIDAK BOLEH dihitung dari
+    harga contoh saat offline (pernah: beli BTC Rp1.000.000 @ live
+    Rp1.120.000.000 -> offline total melonjak palsu jadi Rp5.339.286
+    dan holding Rp1.339.286 karena dinilai di harga contoh Rp1,5 Miliar).
+    Harus beku di harga live terakhir: total Rp5.000.000, PnL Rp0."""
+    mode = {"offline": False}
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        if mode["offline"]:
+            route.abort()
+        elif "simple/price" in route.request.url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        else:
+            route.abort()
+
+    def bn(route):
+        route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", bn)
+    page.route("**/api.binance.com/**", bn)
+    try:
+        enter_guest(page)
+        page.wait_for_timeout(1200)
+        page.fill("#amountInput", "1000000")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(600)
+        check("spot-offline-value: total live Rp5.000.000 setelah beli",
+              "5.000.000" in page.text_content("#totalValue"), page.text_content("#totalValue"))
+        mode["offline"] = True
+        page.click("#refreshBtn")
+        page.wait_for_timeout(2500)
+        check("spot-offline-value: badge OFFLINE setelah refresh",
+              "CONTOH" in page.text_content("#priceBadgeText"))
+        check("spot-offline-value: total BEKU Rp5.000.000, bukan Rp5.339.286",
+              "5.000.000" in page.text_content("#totalValue") and
+              "5.339.286" not in page.text_content("#totalValue"),
+              page.text_content("#totalValue"))
+        check("spot-offline-value: PnL beku Rp0, bukan +Rp339.286",
+              "Rp 0" in page.text_content("#totalPnl") and
+              "339.286" not in page.text_content("#totalPnl"),
+              page.text_content("#totalPnl"))
+        hold = page.text_content("#holdingsList")
+        check("spot-offline-value: holding beku Rp1.000.000 + label harga live terakhir",
+              "1.000.000" in hold and "1.339.286" not in hold and
+              "harga live terakhir" in hold, hold)
+        fs = page.text_content("#futuresSummary")
+        check("spot-offline-value: catatan nilai beku tampil",
+              "harga live terakhir" in fs, fs)
+        check("0 error JS (spot-offline-value)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_fetch_race(pw):
     """Regresi: fetch harga basi TIDAK BOLEH menimpa harga live yang lebih
     baru (pernah: fetch lama gagal lambat lalu menerapkan harga contoh di
@@ -578,6 +642,8 @@ def main():
                 test_binance(pw)
             if which in ("history", "all"):
                 test_offline_history(pw)
+            if which in ("value", "all"):
+                test_spot_offline_frozen_value(pw)
             if which in ("race", "all"):
                 test_fetch_race(pw)
             if which in ("reload", "all"):
