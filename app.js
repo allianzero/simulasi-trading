@@ -296,6 +296,12 @@ function applyPrices(data, live) {
   updatePriceBadge();
   checkLiquidations();
   appendPricePoint();
+  /* Grafik koin terpilih belum live (misal market_chart sempat
+     kena rate limit) — coba lagi tiap refresh harga; guard di
+     fetchPriceChart membatasi percobaan ke 1× per 60 detik. */
+  if (!priceHistory[selectedSymbol] || !priceHistory[selectedSymbol].live) {
+    fetchPriceChart(selectedSymbol);
+  }
   snapshotPortfolio();
   renderAll();
 }
@@ -665,10 +671,16 @@ function drawChart() {
 /* Riwayat harga per koin — HANYA di memori, TIDAK disimpan ke
    localStorage, jadi skema penyimpanan/profil tidak berubah.
    priceHistory[symbol] = { points: [{t, v}], live: bool,
-   loading: bool, fetchedAt: ms|null }.
+   estimated: bool, loading: bool, fetchedAt: ms|null }.
    Sumber: CoinGecko market_chart 24 jam (gratis, tanpa API key).
-   Bila gagal/offline: deret contoh sintetis dari harga contoh,
-   SELALU diberi label offline di UI. */
+   Bila market_chart gagal padahal harga live tersedia (misal
+   rate limit 429), deret cadangan DIJANGKAR pada harga live saat
+   ini / harga live terakhir — BUKAN pada harga contoh (BTC
+   Rp1,5 Miliar) — dan diberi label "estimasi" di UI. Hanya bila
+   tidak ada harga live sama sekali deret contoh dari harga contoh
+   dipakai, SELALU berlabel offline di UI. Grafik yang bukan live
+   dicoba ulang tiap 60 detik (bukan 10 menit) supaya data asli
+   pulih sendiri begitu rate limit reda. */
 var priceHistory = {};
 
 function chartUrlFor(assetId) {
@@ -689,11 +701,15 @@ function seededRandom(seed) {
 }
 
 /* Deret contoh 24 jam: random walk dari harga 24 jam lalu
-   (dihitung dari harga contoh + perubahan 24 jam) menuju harga
-   contoh saat ini. BUKAN harga pasar — hanya pengisi grafik
-   saat offline, dan selalu berlabel offline. */
-function syntheticSeries(symbol) {
-  var s = SAMPLE_PRICES[symbol];
+   (dihitung dari harga jangkar + perubahan 24 jam) menuju harga
+   jangkar saat ini. Jangkar (anchor) BUKAN harga pasar — hanya
+   pengisi grafik saat data 24 jam tidak tersedia. Bila anchor
+   diberikan (harga live / harga live terakhir), deret berakhir
+   tepat di harga itu sehingga garis mark tidak terpisah jauh
+   dari grafik; bila tidak ada anchor, dipakai harga contoh dan
+   grafik selalu berlabel offline. */
+function syntheticSeries(symbol, anchor) {
+  var s = anchor || SAMPLE_PRICES[symbol];
   if (!s) return [];
   var now = Date.now();
   var start = s.idr / (1 + s.change / 100);
@@ -719,12 +735,15 @@ async function fetchPriceChart(symbol) {
   if (!a) return;
   var h = priceHistory[symbol];
   if (h && h.loading) return;
-  if (h && h.fetchedAt && Date.now() - h.fetchedAt < 10 * 60 * 1000 && h.points.length > 10) {
+  /* Grafik live segar 10 menit; grafik cadangan (bukan live) hanya
+     60 detik — supaya dicoba ulang begitu rate limit reda. */
+  var freshMs = (h && h.live) ? 10 * 60 * 1000 : 60 * 1000;
+  if (h && h.fetchedAt && Date.now() - h.fetchedAt < freshMs && h.points.length > 10) {
     drawPriceChart();
     return;
   }
   if (!h) {
-    h = { points: [], live: false, loading: false, fetchedAt: null };
+    h = { points: [], live: false, estimated: false, loading: false, fetchedAt: null };
     priceHistory[symbol] = h;
   }
   h.loading = true;
@@ -745,9 +764,21 @@ async function fetchPriceChart(symbol) {
     h.fetchedAt = Date.now();
   } catch (e) {
     clearTimeout(timer);
-    h.points = syntheticSeries(symbol);
+    /* market_chart gagal — JANGAN jangkar deret pada harga contoh
+       bila harga live tersedia: pakai harga live saat ini, atau
+       harga live terakhir yang tersimpan. Hanya bila keduanya tidak
+       ada, jatuh ke harga contoh (deret offline). */
+    var anchor = null;
+    if (pricesLive && prices[symbol]) anchor = prices[symbol];
+    else if (lastLivePrices[symbol]) anchor = lastLivePrices[symbol];
+    h.points = syntheticSeries(symbol, anchor);
     h.live = false;
-    h.fetchedAt = Date.now();
+    h.estimated = !!anchor;
+    /* Tanpa jangkar (belum ada harga live sama sekali — misal
+       market_chart gagal sebelum fetch harga pertama selesai),
+       jangan kunci deret contoh selama 60 detik: biarkan
+       applyPrices mencoba lagi begitu harga live tiba. */
+    h.fetchedAt = anchor ? Date.now() : null;
   }
   h.loading = false;
   drawPriceChart();
@@ -817,6 +848,7 @@ function drawPriceChart() {
     symbol: selectedSymbol,
     points: h ? h.points.length : 0,
     live: !!(h && h.live),
+    estimated: !!(h && h.estimated),
     loading: !!(h && h.loading),
     lines: lines.map(function (l) { return { type: l.type, price: l.price }; })
   };
@@ -833,7 +865,10 @@ function drawPriceChart() {
   if (note) {
     note.textContent = h.live
       ? "Grafik harga " + (a ? a.name : selectedSymbol) + " 24 jam terakhir dari CoinGecko — diperbarui tiap 30 detik."
-      : "Grafik contoh (offline) — harga bukan harga pasar sebenarnya.";
+      : h.estimated
+        ? "Grafik estimasi — data 24 jam tidak tersedia, dijangkar pada harga live" +
+          (pricesLive ? " saat ini." : " terakhir.")
+        : "Grafik contoh (offline) — harga bukan harga pasar sebenarnya.";
   }
   if (!pts.length) {
     ctx.fillStyle = "#848e9c";
