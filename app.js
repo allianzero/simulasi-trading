@@ -14,6 +14,7 @@
 var INITIAL_CASH = 5000000;
 var STORAGE_KEY = "simulasi-trading-v2";      /* format berprofil */
 var STORAGE_KEY_V1 = "simulasi-trading-v1";   /* format lama (tanpa profil) */
+var LASTLIVE_KEY = "simulasi-trading-lastlive-v1"; /* harga live terakhir (beku) */
 var COINGECKO_URL =
   "https://api.coingecko.com/api/v3/simple/price" +
   "?ids=bitcoin,ethereum,binancecoin,solana,ripple,dogecoin,cardano,tron" +
@@ -159,8 +160,29 @@ var prevPrices = {};
 var pricesLive = false;
 /* Harga live TERAKHIR yang pernah diterima, per simbol — dipakai
    sebagai harga mark "beku" untuk hitung PnL saat offline, supaya
-   PnL tidak pernah dihitung dari harga contoh. */
+   PnL tidak pernah dihitung dari harga contoh. Disimpan juga di
+   localStorage (lihat loadLastLivePrices) agar tetap ada setelah
+   reload halaman saat offline — tanpa ini, tutup posisi setelah
+   reload memakai harga entry dan PnL jadi 0 (rugi/untung hilang). */
 var lastLivePrices = {};
+function loadLastLivePrices() {
+  try {
+    var raw = localStorage.getItem(LASTLIVE_KEY);
+    if (!raw) return;
+    var s = JSON.parse(raw);
+    if (!s || typeof s !== "object") return;
+    Object.keys(s).forEach(function (sym) {
+      var d = s[sym];
+      if (d && isFinite(d.idr) && d.idr > 0) {
+        lastLivePrices[sym] = { idr: d.idr, change: isFinite(d.change) ? d.change : 0 };
+      }
+    });
+  } catch (e) { /* data rusak — abaikan, mulai dari kosong */ }
+}
+function saveLastLivePrices() {
+  try { localStorage.setItem(LASTLIVE_KEY, JSON.stringify(lastLivePrices)); } catch (e) {}
+}
+loadLastLivePrices();
 var lastUpdated = null;
 
 /* UI state */
@@ -268,6 +290,7 @@ function applyPrices(data, live) {
     Object.keys(prices).forEach(function (sym) {
       lastLivePrices[sym] = { idr: prices[sym].idr, change: prices[sym].change };
     });
+    saveLastLivePrices();
   }
   lastUpdated = Date.now();
   updatePriceBadge();
