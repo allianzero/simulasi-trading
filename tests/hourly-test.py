@@ -627,6 +627,46 @@ def test_chart_429(pw):
     finally:
         browser.close()
 
+def test_chart_mark_offline(pw):
+    """Regresi: garis Mark di grafik 24 jam saat offline.
+    Pernah: drawPriceChart() memakai currentPrice() mentah sehingga
+    saat offline garis Mark melonjak ke harga contoh (BTC
+    Rp1.500.000.000) dan ikut merusak skala sumbu grafik, padahal
+    deret grafiknya sendiri sudah dijangkar harga live terakhir.
+    Kini garis Mark memakai pnlMark(): harga live saat live, harga
+    live terakhir (beku) saat offline."""
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        page.wait_for_function("() => window.__priceChart && window.__priceChart.points > 10",
+                               timeout=10000)
+        lines = page.evaluate("() => window.__priceChart.lines")
+        mark = [l for l in lines if l["type"] == "mark"]
+        check("chart-mark: garis Mark live = Rp1.120.000.000",
+              len(mark) == 1 and mark[0]["price"] == 1120000000, mark)
+        # Putuskan semua API lalu Refresh -> harga contoh (offline)
+        page.route("**/api.coingecko.com/**", lambda r: r.abort())
+        page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+        page.route("**/api.binance.com/**", lambda r: r.abort())
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent.includes('CONTOH')",
+            timeout=15000)
+        page.wait_for_timeout(500)
+        lines2 = page.evaluate("() => window.__priceChart.lines")
+        mark2 = [l for l in lines2 if l["type"] == "mark"]
+        check("chart-mark: garis Mark offline BUKAN harga contoh Rp1.500.000.000",
+              not (mark2 and mark2[0]["price"] == SAMPLE_BTC), mark2)
+        check("chart-mark: garis Mark offline = harga live terakhir beku Rp1.120.000.000",
+              len(mark2) == 1 and mark2[0]["price"] == 1120000000, mark2)
+        check("0 error JS (chart-mark)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -650,6 +690,8 @@ def main():
                 test_reload_offline_close(pw)
             if which in ("chart429", "all"):
                 test_chart_429(pw)
+            if which in ("chartmark", "all"):
+                test_chart_mark_offline(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
