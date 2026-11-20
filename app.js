@@ -35,6 +35,8 @@ var REFRESH_MS = 30000;
 var MAX_HISTORY = 240;
 var MAX_PROFILES = 5;
 var MAX_LEVERAGE = 100;
+/* Nomor urut fetch harga (lihat fetchPrices) — naik tiap fetch dimulai. */
+var priceFetchSeq = 0;
 
 /* Daftar aset: id CoinGecko, simbol, nama, ikon, warna merek */
 var ASSETS = [
@@ -324,25 +326,34 @@ async function fetchPricesBinance() {
 }
 
 async function fetchPrices() {
+  /* Nomor urut fetch — hanya fetch TERBARU yang boleh menerapkan
+     hasilnya. Tanpa ini, dua fetch yang tumpang tindih (interval 30 detik
+     vs timeout 10+10 detik, atau klik Refresh saat fetch lama masih jalan)
+     bisa membuat hasil basi menimpa harga live yang lebih baru — termasuk
+     harga contoh yang menimpa harga live dan bisa melikuidasi posisi
+     Short secara keliru. */
+  var mySeq = ++priceFetchSeq;
   setBadgeLoading();
   try {
     var data = await fetchJsonTimeout(COINGECKO_URL, 10000);
     if (!data || !data.bitcoin || typeof data.bitcoin.idr !== "number") {
       throw new Error("Respons CoinGecko tidak lengkap");
     }
-    applyPrices(data, true);
+    if (mySeq === priceFetchSeq) applyPrices(data, true);
     return;
   } catch (e) {
     /* CoinGecko gagal — coba sumber cadangan Binance. */
   }
   try {
     var bin = await fetchPricesBinance();
-    applyPrices(bin, true);
+    if (mySeq === priceFetchSeq) applyPrices(bin, true);
     return;
   } catch (e2) {
     /* Kedua sumber live gagal — baru jatuh ke harga contoh. */
   }
-  /* Fallback terakhir: harga contoh, DIBERI LABEL OFFLINE di UI. */
+  /* Fallback terakhir: harga contoh, DIBERI LABEL OFFLINE di UI.
+     Hanya bila tidak ada fetch yang lebih baru sedang berjalan. */
+  if (mySeq !== priceFetchSeq) return;
   var sample = {};
   Object.keys(SAMPLE_PRICES).forEach(function (sym) {
     var a = assetOf(sym);
