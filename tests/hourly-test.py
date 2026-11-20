@@ -822,6 +822,97 @@ def test_partial_coingecko(pw):
     finally:
         browser.close()
 
+def test_stale_confirm(pw):
+    """Regresi: konfirmasi trade/futures TIDAK BOLEH dieksekusi di harga basi.
+    Pernah: konfirmasi beli dibuka @ Rp1.120.000.000, harga berubah jadi
+    Rp1.100.000.000 (refresh 30 detik) sebelum klik "Ya" — eksekusi tetap
+    memakai harga lama (riwayat @ Rp1.120.000.000); posisi Long yang dibuka
+    begitu langsung PnL -18,18% karena entry harga lama sementara mark
+    sudah Rp1.080.000.000. Kini applyPrices membatalkan konfirmasi yang
+    harganya sudah berubah (kotak tertutup + toast), user konfirmasi ulang
+    di harga baru. Refresh dengan harga yang SAMA tidak membatalkan."""
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('tradePrice').textContent.includes('1.120.000.000')",
+            timeout=10000)
+        # --- SPOT: konfirmasi @ Rp1.120.000.000 ---
+        page.fill("#amountInput", "1000000")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        check("stale-confirm: konfirmasi spot tampil @ Rp1.120.000.000",
+              page.is_visible("#confirmBox") and
+              "1.120.000.000" in page.text_content("#confirmText"),
+              page.text_content("#confirmText"))
+        # Refresh dengan harga SAMA -> konfirmasi TIDAK dibatalkan
+        page.click("#refreshBtn")
+        page.wait_for_timeout(1200)
+        check("stale-confirm: refresh harga sama TIDAK membatalkan konfirmasi",
+              page.is_visible("#confirmBox"), "confirmBox hilang padahal harga sama")
+        # Harga berubah -> refresh -> konfirmasi harus BATAL, tanpa eksekusi
+        price_state["live"] = dict(LIVE)
+        price_state["live"]["bitcoin"] = {"idr": 1100000000, "idr_24h_change": 1.5}
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => document.getElementById('tradePrice').textContent.includes('1.100.000.000')",
+            timeout=10000)
+        check("stale-confirm: konfirmasi spot BATAL setelah harga berubah",
+              page.is_hidden("#confirmBox"), "confirmBox masih tampil")
+        check("stale-confirm: kas tetap Rp5.000.000, belum ada trade",
+              "5.000.000" in cash_text(page) and
+              "Belum ada transaksi" in page.text_content("#tradeHistory"),
+              cash_text(page))
+        # Konfirmasi ulang di harga baru -> eksekusi di harga BARU
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        check("stale-confirm: konfirmasi ulang menampilkan harga baru Rp1.100.000.000",
+              "1.100.000.000" in page.text_content("#confirmText"),
+              page.text_content("#confirmText"))
+        page.click("#confirmYes")
+        page.wait_for_function(
+            "() => document.getElementById('cashBalance').textContent.includes('4.000.000')",
+            timeout=5000)
+        hist = page.text_content("#tradeHistory")
+        check("stale-confirm: beli dieksekusi @ harga BARU Rp1.100.000.000 "
+              "(0,00090909 BTC), bukan harga lama",
+              "1.100.000.000" in hist and "1.120.000.000" not in hist,
+              hist.replace("\n", " ")[:160])
+        # --- FUTURES: konfirmasi Long @ Rp1.100.000.000 ---
+        page.fill("#futMarginInput", "100000")
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        check("stale-confirm: konfirmasi futures tampil, entry Rp1.100.000.000",
+              page.is_visible("#futConfirmBox") and
+              "1.100.000.000" in page.text_content("#futConfirmText"),
+              page.text_content("#futConfirmText"))
+        price_state["live"] = dict(LIVE)
+        price_state["live"]["bitcoin"] = {"idr": 1080000000, "idr_24h_change": 1.5}
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => document.getElementById('futPrice').textContent.includes('1.080.000.000')",
+            timeout=10000)
+        check("stale-confirm: konfirmasi futures BATAL setelah harga berubah",
+              page.is_hidden("#futConfirmBox"), "futConfirmBox masih tampil")
+        check("stale-confirm: belum ada posisi futures terbuka",
+              "Belum ada posisi" in page.text_content("#futPositions"),
+              page.text_content("#futPositions"))
+        # Buka ulang di harga baru -> entry = harga baru, PnL awal Rp0
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        page.click("#futConfirmYes")
+        page.wait_for_timeout(500)
+        pos = page.text_content("#futPositions")
+        check("stale-confirm: posisi Long entry harga BARU Rp1.080.000.000, "
+              "PnL awal Rp0 (bukan -18%)",
+              "1.080.000.000" in pos and "Rp 0" in pos,
+              pos.replace("\n", " ")[:200])
+        check("0 error JS (stale-confirm)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -850,6 +941,8 @@ def main():
                 test_chart_mark_offline(pw)
             if which in ("partial", "all"):
                 test_partial_coingecko(pw)
+            if which in ("stale", "all"):
+                test_stale_confirm(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
