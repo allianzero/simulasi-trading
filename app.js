@@ -293,6 +293,9 @@ function applyPrices(data, live) {
     saveLastLivePrices();
   }
   lastUpdated = Date.now();
+  /* Batalkan konfirmasi trade/futures yang harganya sudah basi
+     (lihat invalidateStaleConfirms) — sebelum render ulang. */
+  invalidateStaleConfirms();
   updatePriceBadge();
   checkLiquidations();
   appendPricePoint();
@@ -407,6 +410,34 @@ async function fetchPrices() {
     };
   });
   applyPrices(sample, false);
+}
+
+/* Bila kotak konfirmasi trade/futures sedang terbuka dan harga koin
+   yang dipilih sudah berubah sejak pratinjau dibuat, batalkan
+   konfirmasi itu — eksekusi tidak boleh memakai harga lama yang
+   sudah tidak berlaku di pasar. Pernah: beli dieksekusi
+   @ Rp1.120.000.000 padahal harga sudah Rp1.100.000.000, dan posisi
+   Long langsung −18,18% begitu dibuka karena entry memakai harga
+   lama. Dipanggil dari applyPrices() tiap harga diperbarui; bila
+   harga TIDAK berubah, konfirmasi dibiarkan (tidak mengganggu
+   user yang konfirmasinya masih berlaku). */
+function invalidateStaleConfirms() {
+  var price = currentPrice();
+  if (price == null) return;
+  if (window._pendingTrade && !$("confirmBox").hidden &&
+      window._pendingTrade.symbol === selectedSymbol &&
+      price !== window._pendingTrade.price) {
+    window._pendingTrade = null;
+    hideConfirm();
+    showToast("Harga " + selectedSymbol + " berubah — silakan periksa dan konfirmasi ulang.", "error");
+  }
+  if (window._pendingFut && !$("futConfirmBox").hidden &&
+      window._pendingFut.symbol === selectedSymbol &&
+      price !== window._pendingFut.entry) {
+    window._pendingFut = null;
+    hideFutConfirm();
+    showToast("Harga " + selectedSymbol + " berubah — silakan periksa dan konfirmasi ulang.", "error");
+  }
 }
 
 function setBadgeLoading() {
@@ -1716,6 +1747,9 @@ $("tradeBtn").addEventListener("click", function () {
       fmtIDR(res.total) + "</strong> (harga " + fmtIDR(res.price) + " / " + selectedSymbol + ")?";
   $("confirmBox").hidden = false;
   window._pendingTrade = res;
+  /* Simpan simbolnya — invalidateStaleConfirms membandingkan harga
+     pending dengan harga koin yang sama saat refresh. */
+  window._pendingTrade.symbol = selectedSymbol;
 });
 
 $("confirmYes").addEventListener("click", function () {
@@ -1782,6 +1816,9 @@ $("futBtn").addEventListener("click", function () {
     " &middot; likuidasi <strong>" + fmtIDR(res.liq) + "</strong>.";
   $("futConfirmBox").hidden = false;
   window._pendingFut = res;
+  /* Simpan simbolnya — invalidateStaleConfirms membandingkan entry
+     pending dengan harga koin yang sama saat refresh. */
+  window._pendingFut.symbol = selectedSymbol;
 });
 
 $("futConfirmYes").addEventListener("click", function () {
