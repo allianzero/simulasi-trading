@@ -1361,6 +1361,15 @@ function computeTrade() {
   var raw = parseFloat($("amountInput").value);
   var price = currentPrice();
   if (!price) return { ok: false, msg: "Harga belum tersedia — tekan Refresh." };
+  /* JANGAN PERNAH beli/jual spot di harga contoh offline: harga
+     contoh jauh dari harga live (BTC Rp1,5 Miliar vs live ~Rp1,12
+     Miliar) sehingga beli offline langsung rugi ~25% begitu harga
+     live kembali — sama alasannya dengan blokir buka posisi
+     futures saat offline. Spot hanya boleh saat harga live
+     (CoinGecko/Binance). */
+  if (!pricesLive) {
+    return { ok: false, msg: "Harga live tidak tersedia — beli/jual spot hanya bisa saat harga live (bukan harga contoh). Tekan Refresh untuk mencoba lagi." };
+  }
   if (!isFinite(raw) || raw <= 0) return null;
 
   if (tradeMode === "buy") {
