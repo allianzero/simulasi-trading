@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SIMULASI TRADING — Simulasi Trading Crypto (Uang Virtual)</title>
-<meta name="description" content="SIMULASI TRADING: game simulasi trading crypto dengan uang virtual Rp5.000.000. Harga live dari CoinGecko. Bukan trading sungguhan.">
+<meta name="description" content="SIMULASI TRADING: game simulasi trading crypto dengan uang virtual Rp5.000.000. Harga live dari CoinGecko. Spot + Futures. Bukan trading sungguhan.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -18,8 +18,22 @@
       <p class="subtitle">Simulasi trading crypto &middot; Uang virtual &middot; Harga live CoinGecko</p>
     </div>
     <div class="top-actions">
-      <span id="priceBadge" class="badge badge-loading">Memuat harga&hellip;</span>
-      <button id="refreshBtn" class="btn btn-ghost" type="button">Refresh</button>
+      <span id="priceBadge" class="badge badge-loading"><span class="dot"></span><span id="priceBadgeText">Memuat harga&hellip;</span></span>
+      <button id="refreshBtn" class="btn btn-ghost" type="button"><span class="refresh-icon">&#8635;</span>Refresh</button>
+      <div class="profile-wrap" id="profileWrap" hidden>
+        <button id="profileBtn" class="profile-btn" type="button" aria-haspopup="true" aria-expanded="false">
+          <span class="profile-avatar" id="profileAvatar">G</span><span id="profileName">Guest</span>
+        </button>
+        <div id="profileMenu" class="profile-menu" hidden>
+          <h3>Profil Guest</h3>
+          <div id="profileList"></div>
+          <div class="profile-new">
+            <input id="newProfileName" type="text" maxlength="20" placeholder="Nama profil baru (opsional)" autocomplete="off">
+            <button id="createProfileBtn" class="btn btn-small" type="button">Buat</button>
+          </div>
+          <p class="note" id="profileNote">Maksimal 5 profil. Data tiap profil tersimpan terpisah di perangkat ini.</p>
+        </div>
+      </div>
     </div>
   </div>
 </header>
@@ -31,107 +45,186 @@
     <u>bukan</u> harga pasar sebenarnya.
   </div>
 
-  <!-- Portofolio -->
-  <section class="card" aria-label="Portofolio">
-    <h2>Portofolio Saya</h2>
-    <div class="portfolio-grid">
-      <div class="stat">
-        <span class="stat-label">Total Nilai Portofolio</span>
-        <span id="totalValue" class="stat-value big">Rp5.000.000</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Saldo Kas</span>
-        <span id="cashBalance" class="stat-value">Rp5.000.000</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Untung / Rugi (dari modal Rp5.000.000)</span>
-        <span id="totalPnl" class="stat-value">Rp0 (0,00%)</span>
-      </div>
-    </div>
-    <p class="muted small">Nilai portofolio = saldo kas + nilai semua koin pada harga saat ini.</p>
-  </section>
+  <div class="layout">
+    <div class="col-main">
+      <!-- Portofolio -->
+      <section class="card" aria-label="Portofolio">
+        <h2>Portofolio Saya</h2>
+        <div class="portfolio-grid">
+          <div class="stat">
+            <span class="stat-label">Total Nilai Portofolio</span>
+            <span id="totalValue" class="stat-value big">Rp5.000.000</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Saldo Kas</span>
+            <span id="cashBalance" class="stat-value">Rp5.000.000</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Untung / Rugi (dari modal Rp5.000.000)</span>
+            <span id="totalPnl" class="stat-value">Rp0 (0,00%)</span>
+          </div>
+        </div>
+        <p class="muted small">Nilai portofolio = saldo kas + nilai semua koin spot + margin futures terbuka + PnL mengambang.</p>
+        <p class="muted small" id="futuresSummary" hidden></p>
+      </section>
 
-  <!-- Grafik -->
-  <section class="card" aria-label="Grafik nilai portofolio">
-    <h2>Grafik Nilai Portofolio</h2>
-    <canvas id="chart" width="800" height="220"></canvas>
-    <p class="muted small" id="chartNote">Grafik mencatat nilai portofolio setiap kali harga diperbarui.</p>
-  </section>
+      <!-- Grafik -->
+      <section class="card" aria-label="Grafik nilai portofolio">
+        <h2>Grafik Nilai Portofolio</h2>
+        <div class="chart-wrap">
+          <canvas id="chart" width="800" height="220"></canvas>
+        </div>
+        <p class="muted small" id="chartNote">Grafik mencatat nilai portofolio setiap kali harga diperbarui.</p>
+      </section>
 
-  <!-- Pasar -->
-  <section class="card" aria-label="Pasar crypto">
-    <h2>Pasar Crypto <span class="muted small">(ketuk koin untuk trading)</span></h2>
-    <div id="marketList" class="market-list"></div>
-    <p class="muted small">Harga diperbarui otomatis tiap 30 detik. Terakhir diperbarui: <span id="lastUpdated">—</span></p>
-  </section>
-
-  <!-- Trading -->
-  <section class="card" aria-label="Beli dan jual">
-    <h2>Beli / Jual</h2>
-    <div class="trade-coin">
-      <span class="coin-icon" id="tradeIcon">₿</span>
-      <div>
-        <strong id="tradeName">Bitcoin</strong>
-        <span class="muted" id="tradeSymbol">BTC</span>
-        <div class="muted small">Harga saat ini: <span id="tradePrice">—</span></div>
-      </div>
+      <!-- Pasar -->
+      <section class="card" aria-label="Pasar crypto">
+        <h2>Pasar Crypto <span class="muted small">(ketuk koin untuk trading)</span></h2>
+        <div id="marketList" class="market-list"></div>
+        <p class="muted small">Harga diperbarui otomatis tiap 30 detik. Terakhir diperbarui: <span id="lastUpdated">—</span></p>
+      </section>
     </div>
 
-    <div class="tabs" role="tablist">
-      <button id="tabBuy" class="tab active" type="button" role="tab" aria-selected="true">Beli</button>
-      <button id="tabSell" class="tab" type="button" role="tab" aria-selected="false">Jual</button>
+    <div class="col-side">
+      <!-- Trading Spot -->
+      <section class="card" aria-label="Beli dan jual">
+        <h2>Spot — Beli / Jual</h2>
+        <div class="trade-coin">
+          <span class="coin-icon" id="tradeIcon">₿</span>
+          <div>
+            <strong id="tradeName">Bitcoin</strong>
+            <span class="muted" id="tradeSymbol">BTC</span>
+            <div class="muted small">Harga saat ini: <span id="tradePrice" class="num">—</span></div>
+          </div>
+        </div>
+
+        <div class="tabs" role="tablist">
+          <button id="tabBuy" class="tab active-buy" type="button" role="tab" aria-selected="true">Beli</button>
+          <button id="tabSell" class="tab" type="button" role="tab" aria-selected="false">Jual</button>
+        </div>
+
+        <label class="field-label" id="amountLabel" for="amountInput">Jumlah Rupiah yang dipakai</label>
+        <input id="amountInput" type="number" min="0" step="any" inputmode="decimal" placeholder="Contoh: 1000000" autocomplete="off">
+
+        <div class="quick-row" id="quickRow">
+          <button type="button" class="btn btn-chip" data-pct="25">25%</button>
+          <button type="button" class="btn btn-chip" data-pct="50">50%</button>
+          <button type="button" class="btn btn-chip" data-pct="75">75%</button>
+          <button type="button" class="btn btn-chip" data-pct="100">Maks</button>
+        </div>
+
+        <div id="previewBox" class="preview" hidden></div>
+        <p id="tradeError" class="error" hidden></p>
+
+        <button id="tradeBtn" class="btn btn-buy" type="button">Beli BTC</button>
+
+        <div id="confirmBox" class="confirm-box" hidden>
+          <p id="confirmText"></p>
+          <div class="confirm-actions">
+            <button id="confirmYes" class="btn btn-buy" type="button">Ya, eksekusi</button>
+            <button id="confirmNo" class="btn btn-ghost" type="button">Batal</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Trading Futures -->
+      <section class="card" aria-label="Futures">
+        <h2>Futures <span class="badge badge-futures">Leverage s.d. 100x</span></h2>
+        <div class="trade-coin">
+          <span class="coin-icon" id="futIcon">₿</span>
+          <div>
+            <strong id="futName">Bitcoin</strong>
+            <span class="muted" id="futSymbol">BTC</span>
+            <div class="muted small">Harga mark: <span id="futPrice" class="num">—</span></div>
+          </div>
+        </div>
+
+        <div class="tabs" role="tablist">
+          <button id="futLong" class="tab active-long" type="button" role="tab" aria-selected="true">Long</button>
+          <button id="futShort" class="tab" type="button" role="tab" aria-selected="false">Short</button>
+        </div>
+
+        <label class="field-label" for="futLeverage">Leverage: <strong id="futLevLabel">10x</strong></label>
+        <input id="futLeverage" type="range" min="1" max="100" step="1" value="10">
+        <div class="lev-row">
+          <span>1x</span>
+          <div class="lev-chips" id="levChips">
+            <button type="button" class="lev-chip" data-lev="5">5x</button>
+            <button type="button" class="lev-chip active" data-lev="10">10x</button>
+            <button type="button" class="lev-chip" data-lev="25">25x</button>
+            <button type="button" class="lev-chip" data-lev="50">50x</button>
+            <button type="button" class="lev-chip" data-lev="100">100x</button>
+          </div>
+          <span>100x</span>
+        </div>
+
+        <label class="field-label" for="futMarginInput">Margin (Rupiah)</label>
+        <input id="futMarginInput" type="number" min="0" step="any" inputmode="decimal" placeholder="Contoh: 100000" autocomplete="off">
+
+        <div id="futPreview" class="preview" hidden></div>
+        <p id="futError" class="error" hidden></p>
+
+        <button id="futBtn" class="btn btn-buy" type="button">Buka Long BTC</button>
+
+        <div id="futConfirmBox" class="confirm-box" hidden>
+          <p id="futConfirmText"></p>
+          <div class="confirm-actions">
+            <button id="futConfirmYes" class="btn btn-buy" type="button">Ya, buka posisi</button>
+            <button id="futConfirmNo" class="btn btn-ghost" type="button">Batal</button>
+          </div>
+        </div>
+
+        <p class="muted small" style="margin-top:14px">Rumus likuidasi (sederhana — <strong>tanpa maintenance margin dan tanpa fee</strong>): Long = entry &times; (1 &minus; 1/leverage), Short = entry &times; (1 + 1/leverage). Posisi terlikuidasi otomatis saat harga mark menyentuh harga likuidasi; margin hangus.</p>
+
+        <h3 class="subhead">Posisi Terbuka</h3>
+        <div id="futPositions" class="positions-list">
+          <p class="empty-note">Belum ada posisi futures.</p>
+        </div>
+      </section>
+
+      <!-- Kepemilikan -->
+      <section class="card" aria-label="Kepemilikan">
+        <h2>Kepemilikan Saya</h2>
+        <div id="holdingsList" class="holdings-list">
+          <p class="muted">Belum ada koin. Pilih koin di pasar lalu beli untuk mulai.</p>
+        </div>
+      </section>
+
+      <!-- Riwayat -->
+      <section class="card" aria-label="Riwayat transaksi">
+        <div class="section-head">
+          <h2>Riwayat Transaksi</h2>
+          <button id="resetBtn" class="btn btn-danger" type="button">Reset Simulasi</button>
+        </div>
+        <div id="tradeHistory" class="history-list">
+          <p class="muted">Belum ada transaksi.</p>
+        </div>
+      </section>
     </div>
-
-    <label class="field-label" id="amountLabel" for="amountInput">Jumlah Rupiah yang dipakai</label>
-    <input id="amountInput" type="number" min="0" step="any" inputmode="decimal" placeholder="Contoh: 1000000" autocomplete="off">
-
-    <div class="quick-row" id="quickRow">
-      <button type="button" class="btn btn-chip" data-pct="25">25%</button>
-      <button type="button" class="btn btn-chip" data-pct="50">50%</button>
-      <button type="button" class="btn btn-chip" data-pct="75">75%</button>
-      <button type="button" class="btn btn-chip" data-pct="100">Maks</button>
-    </div>
-
-    <div id="previewBox" class="preview" hidden></div>
-    <p id="tradeError" class="error" hidden></p>
-
-    <button id="tradeBtn" class="btn btn-buy" type="button">Beli BTC</button>
-
-    <div id="confirmBox" class="confirm-box" hidden>
-      <p id="confirmText"></p>
-      <div class="confirm-actions">
-        <button id="confirmYes" class="btn btn-buy" type="button">Ya, eksekusi</button>
-        <button id="confirmNo" class="btn btn-ghost" type="button">Batal</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- Kepemilikan -->
-  <section class="card" aria-label="Kepemilikan">
-    <h2>Kepemilikan Saya</h2>
-    <div id="holdingsList" class="holdings-list">
-      <p class="muted">Belum ada koin. Pilih koin di pasar lalu beli untuk mulai.</p>
-    </div>
-  </section>
-
-  <!-- Riwayat -->
-  <section class="card" aria-label="Riwayat transaksi">
-    <div class="section-head">
-      <h2>Riwayat Transaksi</h2>
-      <button id="resetBtn" class="btn btn-danger" type="button">Reset Simulasi</button>
-    </div>
-    <div id="tradeHistory" class="history-list">
-      <p class="muted">Belum ada transaksi.</p>
-    </div>
-  </section>
+  </div>
 
   <footer class="disclaimer">
     <p><strong>SIMULASI TRADING</strong> adalah game simulasi — semua uang di sini uang virtual,
     bukan trading sungguhan, dan <strong>tidak ada uang asli yang terlibat</strong>.
     Harga diambil dari CoinGecko (public API, tanpa API key) dan dapat berubah sewaktu-waktu.
+    Futures memakai rumus likuidasi sederhana tanpa maintenance margin dan tanpa fee.
     Hasil simulasi bukan saran investasi.</p>
   </footer>
 </main>
+
+<!-- Toast -->
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<!-- Layar sambutan Guest -->
+<div id="welcomeOverlay" class="welcome-overlay" hidden>
+  <div class="welcome-card">
+    <h1>SIMULASI TRADING</h1>
+    <p>Simulasi trading crypto dengan uang virtual Rp5.000.000.<br>Masuk sebagai Guest — tanpa daftar, tanpa password, semua data tersimpan di perangkat ini.</p>
+    <input id="guestNameInput" type="text" maxlength="20" placeholder="Nama panggilan (opsional)" autocomplete="off">
+    <button id="guestEnterBtn" class="btn btn-buy" type="button">Masuk sebagai Guest</button>
+    <p class="welcome-note">Bila dikosongkan, namamu otomatis jadi Guest + 4 angka acak.</p>
+  </div>
+</div>
 
 <script src="app.js"></script>
 </body>
