@@ -1420,6 +1420,16 @@ function computeTrade() {
     return { ok: true, amount: raw, coins: coins, total: raw, price: price };
   } else {
     var owned = holdingsAmount(selectedSymbol);
+    /* Toleransi pembulatan: jumlah koin dari tombol cepat 100%
+       (toFixed(8)) atau yang diketik dari tampilan holding bisa
+       membulat sedikit DI ATAS holding sebenarnya (mis. beli
+       Rp1.000.000 @ Rp1.120.000.000 = 0,000892857142… BTC, tampil
+       0,00089286 — selisih 2,9e-9) sehingga jual "Maks" ditolak
+       "Koin tidak cukup" padahal angkanya sama. Bila selisihnya
+       hanya pembulatan (<= 1e-8 koin + noise float), jepit ke
+       holding yang dimiliki. */
+    var eps = Math.max(1e-8, owned * 1e-9);
+    if (raw > owned && raw - owned <= eps) raw = owned;
     var total = raw * price;
     if (raw > owned) {
       return { ok: false, msg: "Koin tidak cukup. Kamu punya " + fmtCoin(owned) + " " + selectedSymbol + "." };
