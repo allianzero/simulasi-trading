@@ -667,6 +667,80 @@ def test_chart_mark_offline(pw):
     finally:
         browser.close()
 
+def test_sell_max(pw):
+    """Regresi: tombol cepat 100% (Maks) di mode JUAL harus bisa jual semua.
+    Pernah: beli Rp1.000.000 @ Rp1.120.000.000 = 0,000892857142... BTC;
+    klik 100% mengisi 0.00089286 (toFixed(8) membulat ke ATAS holding)
+    lalu computeTrade menolak 'Koin tidak cukup' — padahal angka yang
+    ditampilkan sama dengan yang dimiliki. Kini computeTrade menjepit
+    selisih pembulatan ke holding yang dimiliki."""
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        page.fill("#amountInput", "1000000")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function(
+            "() => document.getElementById('cashBalance').textContent.includes('4.000.000')",
+            timeout=5000)
+        page.click("#tabSell")
+        page.wait_for_timeout(300)
+        page.click("[data-pct='100']")
+        page.wait_for_timeout(300)
+        val = float(page.input_value("#amountInput"))
+        owned = 1000000 / 1120000000
+        check("sell-max: tombol 100% mengisi jumlah koin (boleh sedikit di atas "
+              "holding karena pembulatan, ditangani computeTrade)",
+              0 < val <= owned + 1e-8, f"input={val} owned={owned}")
+        check("sell-max: tidak ada error 'Koin tidak cukup' setelah klik 100%",
+              page.is_hidden("#tradeError"), page.text_content("#tradeError"))
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function(
+            "() => document.getElementById('cashBalance').textContent.includes('5.000.000')",
+            timeout=5000)
+        check("sell-max: jual 100% berhasil, kas kembali Rp5.000.000",
+              "5.000.000" in cash_text(page), cash_text(page))
+        check("sell-max: holding BTC habis setelah jual semua",
+              "Belum ada koin" in page.text_content("#holdingsList"),
+              page.text_content("#holdingsList"))
+        # Ketik manual jumlah yang tampil di riwayat (0,00089286 — sedikit
+        # di atas holding sebenarnya 0,000892857142...) juga harus lolos
+        # berkat toleransi pembulatan di computeTrade.
+        page.click("#tabBuy")
+        page.fill("#amountInput", "1000000")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function(
+            "() => document.getElementById('cashBalance').textContent.includes('4.000.000')",
+            timeout=5000)
+        page.click("#tabSell")
+        page.fill("#amountInput", "0.00089286")
+        page.wait_for_timeout(300)
+        check("sell-max: ketik manual 0,00089286 (sedikit di atas holding) "
+              "tidak ditolak pembulatan",
+              page.is_hidden("#tradeError") and
+              not page.is_hidden("#previewBox"),
+              page.text_content("#tradeError"))
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function(
+            "() => document.getElementById('cashBalance').textContent.includes('5.000.000')",
+            timeout=5000)
+        check("sell-max: jual manual 0,00089286 berhasil, kas kembali Rp5.000.000",
+              "5.000.000" in cash_text(page), cash_text(page))
+        check("0 error JS (sell-max)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -675,6 +749,7 @@ def main():
             if which in ("live", "all"):
                 test_live(pw)
                 test_mobile_live(pw)
+                test_sell_max(pw)
             if which in ("offline", "all"):
                 test_offline(pw)
                 test_spot_offline_blocked(pw)
