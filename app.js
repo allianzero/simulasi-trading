@@ -469,6 +469,13 @@ function totalValue() {
 
 function snapshotPortfolio() {
   if (!state) return;
+  /* JANGAN rekam snapshot saat harga contoh offline: nilai koin
+     dihitung dari harga contoh (BTC Rp1,5 Miliar vs live ~Rp1,12
+     Miliar) sehingga grafik portofolio mencatat lonjakan palsu yang
+     tersimpan permanen di riwayat. Grafik cukup berhenti (beku)
+     sampai harga live kembali — sama seperti grafik harga 24 jam
+     yang tidak menambah titik saat offline. */
+  if (!pricesLive) return;
   var v = totalValue();
   var last = state.history[state.history.length - 1];
   /* Simpan snapshot baru bila nilai berubah atau sudah >60 detik. */
