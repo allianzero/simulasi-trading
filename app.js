@@ -2,7 +2,8 @@
 
 /* ============================================================
    SIMULASI TRADING — game simulasi trading crypto (uang virtual)
-   Harga live: CoinGecko public API (tanpa API key).
+   Harga live: CoinGecko public API (tanpa API key), cadangan
+   Binance Vision (data-api.binance.vision, tanpa API key).
    Semua data tersimpan di localStorage, tanpa backend.
    - Spot: beli/jual 8 koin.
    - Futures: Long/Short, leverage 1x-100x, likuidasi sederhana
@@ -17,6 +18,19 @@ var COINGECKO_URL =
   "https://api.coingecko.com/api/v3/simple/price" +
   "?ids=bitcoin,ethereum,binancecoin,solana,ripple,dogecoin,cardano,tron" +
   "&vs_currencies=idr&include_24hr_change=true";
+/* Cadangan harga: Binance Vision (mirror publik data pasar Binance,
+   tanpa API key, tidak diblokir geo seperti api.binance.com).
+   Harga USDT per koin x kurs USDT/IDR = harga Rupiah. */
+var BINANCE_VISION_URL =
+  "https://data-api.binance.vision/api/v3/ticker/24hr?symbols=" +
+  encodeURIComponent(JSON.stringify([
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT",
+    "XRPUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "USDTIDR"
+  ]));
+var BINANCE_SYMBOL = {
+  BTC: "BTCUSDT", ETH: "ETHUSDT", BNB: "BNBUSDT", SOL: "SOLUSDT",
+  XRP: "XRPUSDT", DOGE: "DOGEUSDT", ADA: "ADAUSDT", TRX: "TRXUSDT"
+};
 var REFRESH_MS = 30000;
 var MAX_HISTORY = 240;
 var MAX_PROFILES = 5;
@@ -261,32 +275,83 @@ function applyPrices(data, live) {
   renderAll();
 }
 
+/* Ambil JSON dengan batas waktu; gagal (timeout/HTTP/bukan JSON)
+   dilempar sebagai Error agar pemanggil bisa mencoba sumber lain. */
+async function fetchJsonTimeout(url, ms) {
+  var controller = new AbortController();
+  var timer = setTimeout(function () { controller.abort(); }, ms);
+  try {
+    var res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* Harga cadangan dari Binance Vision: harga USDT tiap koin dikali
+   kurs USDT/IDR. Dipakai hanya bila CoinGecko gagal, sebelum jatuh
+   ke harga contoh — supaya harga live tetap tersedia dan posisi
+   tidak pernah dibuka di harga contoh. */
+async function fetchPricesBinance() {
+  var arr = await fetchJsonTimeout(BINANCE_VISION_URL, 10000);
+  if (!Array.isArray(arr) || !arr.length) {
+    throw new Error("Respons Binance kosong");
+  }
+  var bySym = {};
+  arr.forEach(function (t) { if (t && t.symbol) bySym[t.symbol] = t; });
+  var usdtIdr = bySym["USDTIDR"] && parseFloat(bySym["USDTIDR"].lastPrice);
+  if (!isFinite(usdtIdr) || usdtIdr <= 0) {
+    throw new Error("Kurs USDT/IDR Binance tidak tersedia");
+  }
+  var data = {};
+  var ok = 0;
+  ASSETS.forEach(function (a) {
+    var t = bySym[BINANCE_SYMBOL[a.symbol]];
+    var last = t && parseFloat(t.lastPrice);
+    if (isFinite(last) && last > 0) {
+      data[a.id] = {
+        idr: last * usdtIdr,
+        idr_24h_change: parseFloat(t.priceChangePercent) || 0
+      };
+      ok++;
+    }
+  });
+  if (ok < ASSETS.length) {
+    throw new Error("Harga Binance tidak lengkap (" + ok + "/" + ASSETS.length + ")");
+  }
+  return data;
+}
+
 async function fetchPrices() {
   setBadgeLoading();
-  var controller = new AbortController();
-  var timer = setTimeout(function () { controller.abort(); }, 10000);
   try {
-    var res = await fetch(COINGECKO_URL, { signal: controller.signal });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    var data = await res.json();
+    var data = await fetchJsonTimeout(COINGECKO_URL, 10000);
     if (!data || !data.bitcoin || typeof data.bitcoin.idr !== "number") {
       throw new Error("Respons CoinGecko tidak lengkap");
     }
     applyPrices(data, true);
+    return;
   } catch (e) {
-    clearTimeout(timer);
-    /* Fallback: harga contoh, DIBERI LABEL OFFLINE di UI. */
-    var sample = {};
-    Object.keys(SAMPLE_PRICES).forEach(function (sym) {
-      var a = assetOf(sym);
-      sample[a.id] = {
-        idr: SAMPLE_PRICES[sym].idr,
-        idr_24h_change: SAMPLE_PRICES[sym].change
-      };
-    });
-    applyPrices(sample, false);
+    /* CoinGecko gagal — coba sumber cadangan Binance. */
   }
+  try {
+    var bin = await fetchPricesBinance();
+    applyPrices(bin, true);
+    return;
+  } catch (e2) {
+    /* Kedua sumber live gagal — baru jatuh ke harga contoh. */
+  }
+  /* Fallback terakhir: harga contoh, DIBERI LABEL OFFLINE di UI. */
+  var sample = {};
+  Object.keys(SAMPLE_PRICES).forEach(function (sym) {
+    var a = assetOf(sym);
+    sample[a.id] = {
+      idr: SAMPLE_PRICES[sym].idr,
+      idr_24h_change: SAMPLE_PRICES[sym].change
+    };
+  });
+  applyPrices(sample, false);
 }
 
 function setBadgeLoading() {
@@ -1303,6 +1368,12 @@ function computeFutures() {
   var margin = parseFloat($("futMarginInput").value);
   var entry = currentPrice();
   if (!entry) return { ok: false, msg: "Harga belum tersedia — tekan Refresh." };
+  /* JANGAN PERNAH buka posisi di harga contoh offline: harga contoh
+     jauh dari harga live dan pernah membuat posisi terlikuidasi.
+     Posisi hanya boleh dibuka saat harga live (CoinGecko/Binance). */
+  if (!pricesLive) {
+    return { ok: false, msg: "Harga live tidak tersedia — posisi futures hanya bisa dibuka saat harga live (bukan harga contoh). Tekan Refresh untuk mencoba lagi." };
+  }
   if (!isFinite(margin) || margin <= 0) return null;
   if (margin > state.cash) {
     return { ok: false, msg: "Margin melebihi saldo kas. Kas tersedia: " + fmtIDR(state.cash) + "." };
