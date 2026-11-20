@@ -249,6 +249,49 @@ def test_offline(pw):
     finally:
         browser.close()
 
+def test_spot_offline_blocked(pw):
+    """Regresi: beli/jual spot TIDAK BOLEH dieksekusi di harga contoh
+    saat offline (pernah: beli Rp1.000.000 dieksekusi @ Rp1.500.000.000
+    -> langsung rugi ~25% begitu harga live ~Rp1,12 Miliar kembali).
+    Sama alasannya dengan blokir buka posisi futures saat offline."""
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "offline", price_state)
+    try:
+        enter_guest(page)
+        # Beli spot saat offline — HARUS DIBLOKIR
+        page.fill("#amountInput", "1000000")
+        page.wait_for_timeout(500)
+        err = page.text_content("#tradeError")
+        err_hidden = page.locator("#tradeError[hidden]").count() == 1
+        page.click("#tradeBtn")
+        page.wait_for_timeout(800)
+        confirm_shown = page.locator("#confirmBox:not([hidden])").count() == 1
+        check("spot-offline: beli DIBLOKIR, pesan harga live tampil",
+              (not err_hidden) and "Harga live tidak tersedia" in (err or "") and not confirm_shown,
+              "err=" + (err or "(hidden)") + " | confirm muncul=" + str(confirm_shown))
+        check("spot-offline: kas tetap Rp5.000.000 (tidak ada trade)",
+              "5.000.000" in cash_text(page), cash_text(page))
+        check("spot-offline: tidak ada holding BTC dari harga contoh",
+              "BTC" not in page.text_content("#holdingsList"),
+              page.text_content("#holdingsList")[:120])
+        check("spot-offline: riwayat tetap kosong",
+              "Belum ada transaksi" in page.text_content("#tradeHistory"),
+              page.text_content("#tradeHistory")[:120])
+        # Jual spot saat offline — juga HARUS DIBLOKIR (pesan yang sama)
+        page.click("#tabSell")
+        page.fill("#amountInput", "0.001")
+        page.wait_for_timeout(500)
+        err2 = page.text_content("#tradeError")
+        page.click("#tradeBtn")
+        page.wait_for_timeout(500)
+        confirm2 = page.locator("#confirmBox:not([hidden])").count() == 1
+        check("spot-offline: jual DIBLOKIR juga",
+              "Harga live tidak tersedia" in (err2 or "") and not confirm2,
+              "err=" + (err2 or "(hidden)") + " | confirm muncul=" + str(confirm2))
+        check("0 error JS (spot-offline)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_binance(pw):
     price_state = {"live": dict(LIVE)}
     browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "binance", price_state)
@@ -530,6 +573,7 @@ def main():
                 test_mobile_live(pw)
             if which in ("offline", "all"):
                 test_offline(pw)
+                test_spot_offline_blocked(pw)
             if which in ("binance", "all"):
                 test_binance(pw)
             if which in ("history", "all"):
