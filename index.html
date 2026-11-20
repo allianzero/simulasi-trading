@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SIMULASI TRADING — Simulasi Trading Crypto (Uang Virtual)</title>
+<meta name="description" content="SIMULASI TRADING: game simulasi trading crypto dengan uang virtual Rp5.000.000. Harga live dari CoinGecko. Bukan trading sungguhan.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div>
+      <h1>SIMULASI TRADING</h1>
+      <p class="subtitle">Simulasi trading crypto &middot; Uang virtual &middot; Harga live CoinGecko</p>
+    </div>
+    <div class="top-actions">
+      <span id="priceBadge" class="badge badge-loading">Memuat harga&hellip;</span>
+      <button id="refreshBtn" class="btn btn-ghost" type="button">Refresh</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="offlineBanner" class="banner banner-offline" hidden>
+    <strong>HARGA CONTOH (OFFLINE)</strong> — tidak bisa mengambil harga live dari CoinGecko
+    (periksa koneksi internet, lalu tekan Refresh). Semua harga di bawah ini hanya contoh,
+    <u>bukan</u> harga pasar sebenarnya.
+  </div>
+
+  <!-- Portofolio -->
+  <section class="card" aria-label="Portofolio">
+    <h2>Portofolio Saya</h2>
+    <div class="portfolio-grid">
+      <div class="stat">
+        <span class="stat-label">Total Nilai Portofolio</span>
+        <span id="totalValue" class="stat-value big">Rp5.000.000</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Saldo Kas</span>
+        <span id="cashBalance" class="stat-value">Rp5.000.000</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Untung / Rugi (dari modal Rp5.000.000)</span>
+        <span id="totalPnl" class="stat-value">Rp0 (0,00%)</span>
+      </div>
+    </div>
+    <p class="muted small">Nilai portofolio = saldo kas + nilai semua koin pada harga saat ini.</p>
+  </section>
+
+  <!-- Grafik -->
+  <section class="card" aria-label="Grafik nilai portofolio">
+    <h2>Grafik Nilai Portofolio</h2>
+    <canvas id="chart" width="800" height="220"></canvas>
+    <p class="muted small" id="chartNote">Grafik mencatat nilai portofolio setiap kali harga diperbarui.</p>
+  </section>
+
+  <!-- Pasar -->
+  <section class="card" aria-label="Pasar crypto">
+    <h2>Pasar Crypto <span class="muted small">(ketuk koin untuk trading)</span></h2>
+    <div id="marketList" class="market-list"></div>
+    <p class="muted small">Harga diperbarui otomatis tiap 30 detik. Terakhir diperbarui: <span id="lastUpdated">—</span></p>
+  </section>
+
+  <!-- Trading -->
+  <section class="card" aria-label="Beli dan jual">
+    <h2>Beli / Jual</h2>
+    <div class="trade-coin">
+      <span class="coin-icon" id="tradeIcon">₿</span>
+      <div>
+        <strong id="tradeName">Bitcoin</strong>
+        <span class="muted" id="tradeSymbol">BTC</span>
+        <div class="muted small">Harga saat ini: <span id="tradePrice">—</span></div>
+      </div>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button id="tabBuy" class="tab active" type="button" role="tab" aria-selected="true">Beli</button>
+      <button id="tabSell" class="tab" type="button" role="tab" aria-selected="false">Jual</button>
+    </div>
+
+    <label class="field-label" id="amountLabel" for="amountInput">Jumlah Rupiah yang dipakai</label>
+    <input id="amountInput" type="number" min="0" step="any" inputmode="decimal" placeholder="Contoh: 1000000" autocomplete="off">
+
+    <div class="quick-row" id="quickRow">
+      <button type="button" class="btn btn-chip" data-pct="25">25%</button>
+      <button type="button" class="btn btn-chip" data-pct="50">50%</button>
+      <button type="button" class="btn btn-chip" data-pct="75">75%</button>
+      <button type="button" class="btn btn-chip" data-pct="100">Maks</button>
+    </div>
+
+    <div id="previewBox" class="preview" hidden></div>
+    <p id="tradeError" class="error" hidden></p>
+
+    <button id="tradeBtn" class="btn btn-buy" type="button">Beli BTC</button>
+
+    <div id="confirmBox" class="confirm-box" hidden>
+      <p id="confirmText"></p>
+      <div class="confirm-actions">
+        <button id="confirmYes" class="btn btn-buy" type="button">Ya, eksekusi</button>
+        <button id="confirmNo" class="btn btn-ghost" type="button">Batal</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Kepemilikan -->
+  <section class="card" aria-label="Kepemilikan">
+    <h2>Kepemilikan Saya</h2>
+    <div id="holdingsList" class="holdings-list">
+      <p class="muted">Belum ada koin. Pilih koin di pasar lalu beli untuk mulai.</p>
+    </div>
+  </section>
+
+  <!-- Riwayat -->
+  <section class="card" aria-label="Riwayat transaksi">
+    <div class="section-head">
+      <h2>Riwayat Transaksi</h2>
+      <button id="resetBtn" class="btn btn-danger" type="button">Reset Simulasi</button>
+    </div>
+    <div id="tradeHistory" class="history-list">
+      <p class="muted">Belum ada transaksi.</p>
+    </div>
+  </section>
+
+  <footer class="disclaimer">
+    <p><strong>SIMULASI TRADING</strong> adalah game simulasi — semua uang di sini uang virtual,
+    bukan trading sungguhan, dan <strong>tidak ada uang asli yang terlibat</strong>.
+    Harga diambil dari CoinGecko (public API, tanpa API key) dan dapat berubah sewaktu-waktu.
+    Hasil simulasi bukan saran investasi.</p>
+  </footer>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

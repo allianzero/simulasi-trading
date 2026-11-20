@@ -1,0 +1,341 @@
+:root {
+  --bg: #0b0e14;
+  --card: #141926;
+  --card-border: #232a3d;
+  --text: #e8ecf3;
+  --muted: #8b93a7;
+  --green: #16c784;
+  --red: #ea3943;
+  --accent: #f0b90b;
+  --buy: #16c784;
+  --sell: #ea3943;
+  --input-bg: #0d1220;
+  --chip: #1d2438;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  line-height: 1.5;
+}
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 16px 32px;
+}
+
+/* Header */
+.topbar {
+  background: #10141f;
+  border-bottom: 1px solid var(--card-border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.topbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+.topbar h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+.subtitle {
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Badges & banner */
+.badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.badge-live { background: rgba(22, 199, 132, 0.15); color: var(--green); }
+.badge-offline { background: rgba(234, 57, 67, 0.15); color: var(--red); }
+.badge-loading { background: rgba(139, 147, 167, 0.15); color: var(--muted); }
+
+.banner {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+}
+.banner-offline {
+  background: rgba(234, 57, 67, 0.12);
+  border: 1px solid rgba(234, 57, 67, 0.5);
+  color: #ffb3b8;
+}
+
+/* Cards */
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  padding: 16px;
+  margin-top: 16px;
+}
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.section-head h2 { margin-bottom: 0; }
+
+/* Portofolio */
+.portfolio-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+.stat { display: flex; flex-direction: column; }
+.stat-label { font-size: 0.8rem; color: var(--muted); }
+.stat-value { font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat-value.big { font-size: 1.7rem; }
+.up { color: var(--green); }
+.down { color: var(--red); }
+.muted { color: var(--muted); }
+.small { font-size: 0.82rem; }
+
+/* Chart */
+#chart {
+  width: 100%;
+  height: 200px;
+  display: block;
+}
+
+/* Pasar */
+.market-list { display: flex; flex-direction: column; }
+.market-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 6px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--card-border);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.market-row:last-child { border-bottom: none; }
+.market-row:hover { background: rgba(255, 255, 255, 0.03); }
+.market-row.selected { background: rgba(240, 185, 11, 0.08); }
+.coin-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #232a3d;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.coin-info { flex: 1; min-width: 0; }
+.coin-name { font-weight: 600; display: block; }
+.coin-symbol { font-size: 0.8rem; color: var(--muted); }
+.coin-price { text-align: right; font-variant-numeric: tabular-nums; }
+.coin-price .price { font-weight: 700; display: block; }
+.change { font-size: 0.82rem; font-weight: 600; }
+.change.up { color: var(--green); }
+.change.down { color: var(--red); }
+
+/* Trading */
+.trade-coin {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.tab {
+  flex: 1;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--chip);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tab.active-buy { background: var(--buy); border-color: var(--buy); color: #04120b; }
+.tab.active-sell { background: var(--sell); border-color: var(--sell); color: #fff; }
+
+.field-label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+input[type="number"] {
+  width: 100%;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+input[type="number"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+.quick-row {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0;
+}
+.preview {
+  background: var(--input-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 12px;
+  margin: 4px 0 12px;
+  font-size: 0.95rem;
+}
+.preview .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+.error {
+  color: var(--red);
+  font-size: 0.9rem;
+  margin: 0 0 10px;
+}
+.confirm-box {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed var(--accent);
+  border-radius: 10px;
+  background: rgba(240, 185, 11, 0.06);
+}
+.confirm-box p { margin: 0 0 10px; }
+.confirm-actions { display: flex; gap: 8px; }
+
+/* Buttons */
+.btn {
+  font: inherit;
+  font-weight: 700;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  padding: 10px 16px;
+  cursor: pointer;
+  color: var(--text);
+  background: var(--chip);
+}
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-ghost {
+  background: transparent;
+  border-color: var(--card-border);
+  font-size: 0.85rem;
+  padding: 7px 12px;
+}
+.btn-chip {
+  flex: 1;
+  padding: 7px 0;
+  font-size: 0.85rem;
+}
+.btn-buy {
+  width: 100%;
+  background: var(--buy);
+  color: #04120b;
+  padding: 13px;
+  font-size: 1.02rem;
+}
+.btn-sell {
+  width: 100%;
+  background: var(--sell);
+  color: #fff;
+  padding: 13px;
+  font-size: 1.02rem;
+}
+.btn-danger {
+  background: rgba(234, 57, 67, 0.12);
+  border-color: rgba(234, 57, 67, 0.5);
+  color: var(--red);
+  font-size: 0.85rem;
+  padding: 7px 12px;
+}
+
+/* Kepemilikan & riwayat */
+.holdings-list, .history-list { display: flex; flex-direction: column; }
+.holding-row, .history-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--card-border);
+}
+.holding-row:last-child, .history-row:last-child { border-bottom: none; }
+.holding-info, .history-info { flex: 1; min-width: 0; }
+.holding-info .coin-name, .history-info .trade-type { font-weight: 700; }
+.holding-detail, .history-detail {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.holding-value { text-align: right; font-variant-numeric: tabular-nums; }
+.holding-value .value { font-weight: 700; display: block; }
+.btn-delete {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+}
+.btn-delete:hover { color: var(--red); }
+
+.disclaimer {
+  margin-top: 20px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.disclaimer p { margin: 0; }
+
+@media (min-width: 560px) {
+  .portfolio-grid { grid-template-columns: 1fr 1fr 1fr; }
+}
