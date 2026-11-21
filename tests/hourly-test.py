@@ -1321,6 +1321,109 @@ def test_micro_sell_quick(pw):
     finally:
         browser.close()
 
+def test_id_number_format(pw):
+    """Input harus menerima format angka Indonesia seperti yang
+    ditampilkan aplikasi ("Rp1.000.000", "0,00089286"). Pernah:
+    input type="number" + parseFloat mentah membuat "1.000.000"
+    dibaca Rp1 (beli Rp1.000.000 diam-diam jadi beli Rp1),
+    "0,00089286" dibaca 89286 koin (jual selalu gagal "Koin tidak
+    cukup"), dan margin "100.000" dibaca Rp100 (notional Rp1.000).
+    Harus: ketik persis seperti tampilan -> terbaca benar; format
+    polos ("1000000") dan desimal mikro ("0.000000002" dari tombol
+    cepat) tetap jalan."""
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        if "simple/price" in route.request.url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in route.request.url:
+            mock_chart(route)
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        # Beli ketik "1.000.000" (persis seperti tampilan Rupiah)
+        page.fill("#amountInput", "1.000.000")
+        page.wait_for_timeout(300)
+        check("id-format: beli '1.000.000' pratinjau Rp1.000.000 (bukan Rp1)",
+              page.is_visible("#previewBox") and "1.000.000" in page.text_content("#previewBox"),
+              page.text_content("#previewBox").replace("\n", " ")[:140])
+        check("id-format: beli '1.000.000' dapat 0,00089286 BTC",
+              "0,00089286 BTC" in page.text_content("#previewBox"),
+              page.text_content("#previewBox").replace("\n", " ")[:140])
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function("() => document.getElementById('cashBalance').textContent.includes('4.000.000')", timeout=5000)
+        check("id-format: beli '1.000.000' tereksekusi, kas Rp4.000.000",
+              "4.000.000" in cash_text(page), cash_text(page))
+        # Jual ketik "0,00089286" (koma desimal, seperti tampilan holding)
+        page.click("#tabSell")
+        page.wait_for_timeout(300)
+        page.fill("#amountInput", "0,00089286")
+        page.wait_for_timeout(300)
+        check("id-format: jual '0,00089286' pratinjau tampil, tanpa 'Koin tidak cukup'",
+              page.is_visible("#previewBox") and page.is_hidden("#tradeError"),
+              page.text_content("#tradeError") if page.is_visible("#tradeError") else "pratinjau tampil")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function("() => document.getElementById('cashBalance').textContent.includes('5.000.000')", timeout=5000)
+        check("id-format: jual '0,00089286' tereksekusi, kas kembali Rp5.000.000",
+              "5.000.000" in cash_text(page), cash_text(page))
+        # Margin futures ketik "100.000"
+        page.fill("#futMarginInput", "100.000")
+        page.wait_for_timeout(300)
+        fut_txt = page.text_content("#futPreview")
+        check("id-format: margin '100.000' pratinjau margin Rp100.000 (bukan Rp100)",
+              page.is_visible("#futPreview") and "Rp\u00a0100.000" in fut_txt,
+              fut_txt.replace("\n", " ")[:160])
+        check("id-format: margin '100.000' notional Rp1.000.000 (bukan Rp1.000)",
+              "Rp\u00a01.000.000" in fut_txt, fut_txt.replace("\n", " ")[:160])
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        page.click("#futConfirmYes")
+        page.wait_for_function("() => document.getElementById('cashBalance').textContent.includes('4.900.000')", timeout=5000)
+        check("id-format: posisi Long dibuka margin Rp100.000, kas Rp4.900.000",
+              "4.900.000" in cash_text(page), cash_text(page))
+        # Tutup posisi, lalu desimal mikro "0.000000002" tetap dibaca
+        # sebagai desimal (bukan 2 koin) — guard aturan ribuan.
+        page.click("#futPositions [data-pos-id]")
+        page.wait_for_function("() => document.getElementById('cashBalance').textContent.includes('5.000.000')", timeout=5000)
+        page.click("#tabBuy")
+        page.wait_for_timeout(300)
+        page.fill("#amountInput", "10")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(400)
+        page.click("#tabSell")
+        page.wait_for_timeout(300)
+        page.fill("#amountInput", "0.000000002")
+        page.wait_for_timeout(300)
+        check("id-format: jual mikro '0.000000002' pratinjau tampil (desimal, bukan 2 BTC)",
+              page.is_visible("#previewBox") and "0,000000002" in page.text_content("#previewBox"),
+              page.text_content("#previewBox").replace("\n", " ")[:140] if page.is_visible("#previewBox") else
+              (page.text_content("#tradeError") if page.is_visible("#tradeError") else "pratinjau sembunyi"))
+        check("0 error JS (id-format)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -1333,6 +1436,7 @@ def main():
                 test_tab_switch_clears_input(pw)
                 test_profile_name_escaped(pw)
                 test_overlapping_confirms(pw)
+                test_id_number_format(pw)
             if which in ("resetarmed", "all"):
                 test_reset_armed_profile_switch(pw)
             if which in ("microsell", "all"):
