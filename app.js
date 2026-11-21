@@ -274,6 +274,12 @@ function parseAmount(str) {
   if (typeof str !== "string") return NaN;
   var s = str.trim().replace(/\s/g, "");
   if (!s) return NaN;
+  /* Awalan "Rp" ditoleransi — aplikasi sendiri menampilkan semua
+     angka sebagai "Rp1.000.000", jadi user wajar mengetik atau
+     menempel persis seperti itu ("Rp1.000.000", "Rp 100.000").
+     Tanpa ini parseAmount mengembalikan NaN dan pratinjau diam-diam
+     hilang tanpa pesan apa-apa (bukan error, bukan pratinjau). */
+  s = s.replace(/^rp/i, "");
   if (s.indexOf(",") >= 0) {
     s = s.replace(/\./g, "").replace(",", ".");
   } else if (/^([1-9]\d{0,2})(\.\d{3})+$/.test(s)) {
