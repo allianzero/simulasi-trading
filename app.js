@@ -1269,12 +1269,20 @@ function currentPrice() {
 
 function renderTradePanel() {
   var a = assetOf(selectedSymbol);
-  var p = currentPrice();
   $("tradeIcon").textContent = a ? a.icon : "?";
   $("tradeIcon").setAttribute("style", iconStyle(a));
   $("tradeName").textContent = a ? a.name : "—";
   $("tradeSymbol").textContent = selectedSymbol;
-  $("tradePrice").textContent = p ? fmtIDR(p) + " / " + selectedSymbol : "—";
+  /* Harga di panel JANGAN dari currentPrice() mentah — saat offline
+     itu harga contoh (BTC Rp1,5 Miliar) sehingga panel menampilkan
+     harga contoh sebagai "Harga saat ini", padahal holding di bawah
+     memakai harga live terakhir yang dibekukan. Pakai spotMark():
+     harga live saat live, harga live terakhir (beku) saat offline,
+     "—" bila belum pernah ada harga live. */
+  var sm = spotMark(selectedSymbol);
+  $("tradePrice").textContent = sm
+    ? fmtIDR(sm.price) + " / " + selectedSymbol + (sm.frozen ? " (harga live terakhir)" : "")
+    : "—";
 
   var buy = tradeMode === "buy";
   $("tabBuy").className = "tab" + (buy ? " active-buy" : "");
@@ -1313,12 +1321,21 @@ function hideConfirm() {
 
 function renderFuturesPanel() {
   var a = assetOf(selectedSymbol);
-  var p = currentPrice();
   $("futIcon").textContent = a ? a.icon : "?";
   $("futIcon").setAttribute("style", iconStyle(a));
   $("futName").textContent = a ? a.name : "—";
   $("futSymbol").textContent = selectedSymbol;
-  $("futPrice").textContent = p ? fmtIDR(p) + " / " + selectedSymbol : "—";
+  /* "Harga mark" di panel JANGAN dari currentPrice() mentah — saat
+     offline itu harga contoh (BTC Rp1,5 Miliar) sehingga panel
+     menampilkan mark contoh, padahal kartu posisi di seksi yang
+     sama menampilkan mark beku Rp1,12 Miliar (harga live terakhir):
+     dua angka bertentangan dalam satu kartu, dan "mark" adalah
+     angka yang dipakai hitung PnL/likuidasi. Pakai pnlMark() —
+     pola yang sama seperti garis Mark di grafik 24 jam. */
+  var fm = pnlMark(selectedSymbol);
+  $("futPrice").textContent = fm
+    ? fmtIDR(fm.price) + " / " + selectedSymbol + (fm.frozen ? " (harga live terakhir)" : "")
+    : "—";
 
   var isLong = futDirection === "long";
   $("futLong").className = "tab" + (isLong ? " active-long" : "");
