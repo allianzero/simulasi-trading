@@ -1237,6 +1237,90 @@ def test_reset_armed_profile_switch(pw):
     finally:
         browser.close()
 
+def test_micro_sell_quick(pw):
+    """Tombol cepat jual pada holding mikro (< 1 satoshi) tidak boleh
+    mati. Pernah: beli Rp10 BTC @ Rp1.120.000.000 -> holding
+    0,0000000089 BTC; toFixed(8) membulatkan 25%/50% jadi "0"
+    sehingga input "0", pratinjau sembunyi, tombol terasa mati; 75%/
+    100% mengisi "1e-8" (notasi ilmiah). Harus: semua tombol cepat
+    mengisi nilai desimal biasa bukan nol + pratinjau tampil, dan
+    jual 25% benar-benar tereksekusi."""
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        if "simple/price" in route.request.url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in route.request.url:
+            mock_chart(route)
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        # Beli Rp10 BTC -> holding ~8,9e-9 BTC (< 1 satoshi)
+        page.fill("#amountInput", "10")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(400)
+        check("micro-sell: beli Rp10 BTC, kas Rp4.999.990",
+              "4.999.990" in cash_text(page), cash_text(page))
+        check("micro-sell: holding tampil 0,0000000089 koin (bukan 0,00000001)",
+              "0,0000000089" in page.text_content("#holdingsList"),
+              page.text_content("#holdingsList").replace("\n", " ")[:120])
+        page.click("#tabSell")
+        page.wait_for_timeout(300)
+        for pct in ("25", "50", "75", "100"):
+            page.click(f"#quickRow [data-pct='{pct}']")
+            page.wait_for_timeout(300)
+            val = page.input_value("#amountInput")
+            check(f"micro-sell: cepat {pct}% mengisi nilai desimal bukan nol, bukan '1e-8'",
+                  val not in ("", "0") and "e" not in val and float(val) > 0,
+                  f"input={val!r}")
+            check(f"micro-sell: cepat {pct}% menampilkan pratinjau",
+                  page.is_visible("#previewBox"),
+                  f"input={val!r}, preview hidden")
+        # Jual 25% benar-benar tereksekusi (kas naik Rp2-3). Jangan
+        # wait_for_selector confirmBox: pada kode pra-perbaikan
+        # konfirmasi TIDAK PERNAH muncul (input "0") sehingga tes
+        # akan crash timeout, bukan gagal bersih.
+        page.click("#quickRow [data-pct='25']")
+        page.wait_for_timeout(300)
+        page.click("#tradeBtn")
+        page.wait_for_timeout(300)
+        check("micro-sell: jual 25% membuka konfirmasi (bukan 'Masukkan jumlah dulu.')",
+              page.is_visible("#confirmBox"),
+              page.text_content("#tradeError") if page.is_visible("#tradeError") else "confirmBox tampil")
+        if page.is_visible("#confirmBox"):
+            page.click("#confirmYes")
+            page.wait_for_timeout(400)
+        check("micro-sell: jual 25% tereksekusi, kas naik jadi Rp4.999.992",
+              "4.999.992" in cash_text(page), cash_text(page))
+        check("micro-sell: riwayat JUAL BTC tercatat",
+              "JUAL BTC" in page.text_content("#tradeHistory"),
+              page.text_content("#tradeHistory")[:80])
+        check("micro-sell: riwayat jual tampil 0,000000002 BTC (bukan '0 BTC')",
+              "0,000000002 BTC" in page.text_content("#tradeHistory") and
+              "0 BTC" not in page.text_content("#tradeHistory"),
+              page.text_content("#tradeHistory")[:120])
+        check("0 error JS (micro-sell)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -1251,6 +1335,8 @@ def main():
                 test_overlapping_confirms(pw)
             if which in ("resetarmed", "all"):
                 test_reset_armed_profile_switch(pw)
+            if which in ("microsell", "all"):
+                test_micro_sell_quick(pw)
             if which in ("offline", "all"):
                 test_offline(pw)
                 test_spot_offline_blocked(pw)
