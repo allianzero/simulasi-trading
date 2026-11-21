@@ -741,6 +741,58 @@ def test_sell_max(pw):
     finally:
         browser.close()
 
+def test_tab_switch_clears_input(pw):
+    """Regresi: ganti tab Beli/Jual harus mengosongkan input jumlah.
+    Pernah: ketik Rp1.000.000 di mode Beli, ketuk tab Jual — input tetap
+    "1000000" tapi dibaca sebagai 1.000.000 BTC sehingga muncul error
+    menyesatkan 'Koin tidak cukup. Kamu punya 0 BTC.' (dan sebaliknya:
+    0,0005 BTC di mode Jual dibaca sebagai Rp0,0005 di mode Beli)."""
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        # Beli -> Jual: angka Rupiah tidak boleh terbawa sebagai jumlah koin
+        page.fill("#amountInput", "1000000")
+        page.wait_for_timeout(300)
+        check("tab-switch: pratinjau beli tampil sebelum ganti tab",
+              not page.is_hidden("#previewBox"))
+        page.click("#tabSell")
+        page.wait_for_timeout(300)
+        check("tab-switch: input dikosongkan saat pindah ke Jual",
+              page.input_value("#amountInput") == "",
+              repr(page.input_value("#amountInput")))
+        check("tab-switch: tidak ada error 'Koin tidak cukup' menyesatkan "
+              "setelah pindah ke Jual",
+              page.is_hidden("#tradeError"), page.text_content("#tradeError"))
+        check("tab-switch: pratinjau tersembunyi setelah pindah ke Jual",
+              page.is_hidden("#previewBox"))
+        # Jual -> Beli: angka koin tidak boleh terbawa sebagai Rupiah
+        page.fill("#amountInput", "0.0005")
+        page.wait_for_timeout(300)
+        page.click("#tabBuy")
+        page.wait_for_timeout(300)
+        check("tab-switch: input dikosongkan saat pindah kembali ke Beli",
+              page.input_value("#amountInput") == "",
+              repr(page.input_value("#amountInput")))
+        check("tab-switch: tidak ada error setelah pindah kembali ke Beli",
+              page.is_hidden("#tradeError"), page.text_content("#tradeError"))
+        # Alur normal tetap jalan setelah ganti-ganti tab
+        page.fill("#amountInput", "1000000")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function(
+            "() => document.getElementById('cashBalance').textContent.includes('4.000.000')",
+            timeout=5000)
+        check("tab-switch: beli tetap berhasil setelah ganti tab",
+              "4.000.000" in cash_text(page), cash_text(page))
+        check("0 error JS (tab-switch)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_partial_coingecko(pw):
     """Regresi: respons CoinGecko TIDAK LENGKAP (satu koin hilang).
     Pernah: CoinGecko mengembalikan 7 dari 8 koin (SOL hilang) lalu
@@ -922,6 +974,7 @@ def main():
                 test_live(pw)
                 test_mobile_live(pw)
                 test_sell_max(pw)
+                test_tab_switch_clears_input(pw)
             if which in ("offline", "all"):
                 test_offline(pw)
                 test_spot_offline_blocked(pw)
