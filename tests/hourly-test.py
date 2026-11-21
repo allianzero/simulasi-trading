@@ -1661,6 +1661,41 @@ def test_trades_cap(pw):
     finally:
         browser.close()
 
+def test_market_row_no_focus_jump(pw):
+    """Regresi: ketuk baris pasar di HP TIDAK melempar fokus/scroll.
+    Pernah: klik baris pasar memanggil amountInput.focus() — di HP
+    (390x844) panel Spot ada jauh di bawah daftar pasar sehingga
+    halaman melonjak scrollY 0 -> 1414 dan keyboard terbuka; user
+    yang cuma mau ganti koin tiba-tiba "dilempar" ke panel trade."""
+    browser, ctx, page, errors = new_page(pw, {"width": 390, "height": 844}, "live", {"live": dict(LIVE)})
+    try:
+        enter_guest(page)
+        page.wait_for_function("() => document.getElementById('priceBadgeText').textContent.includes('HARGA LIVE')", timeout=10000)
+        page.wait_for_timeout(500)
+        # Gulir manual sampai baris ETH terlihat (seperti user sungguhan),
+        # lalu klik via JS — page.click() ikut menggulir sendiri sehingga
+        # tidak bisa dipakai untuk mengukur guliran yang dibuat aplikasi.
+        page.evaluate("document.querySelector('.market-row:nth-child(2)').scrollIntoView({block: 'center'})")
+        page.evaluate("document.activeElement && document.activeElement.blur()")
+        page.wait_for_timeout(200)
+        y0 = page.evaluate("window.scrollY")
+        check("market-focus: sebelum klik, halaman di posisi baris ETH",
+              y0 > 0, "scrollY=" + str(y0))
+        page.evaluate("document.querySelector('.market-row:nth-child(2)').click()")
+        page.wait_for_timeout(600)
+        check("market-focus: koin berganti ke ETH",
+              page.text_content("#tradeSymbol") == "ETH",
+              page.text_content("#tradeSymbol"))
+        check("market-focus: fokus TIDAK pindah ke input jumlah",
+              page.evaluate("document.activeElement && document.activeElement.id") != "amountInput",
+              page.evaluate("document.activeElement && document.activeElement.id"))
+        check("market-focus: halaman TIDAK ketarik ke bawah oleh aplikasi",
+              page.evaluate("window.scrollY") == y0,
+              "scrollY %s -> %s" % (y0, page.evaluate("window.scrollY")))
+        check("0 error JS (market-focus)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -1707,6 +1742,8 @@ def main():
                 test_fut_error_no_repeat_scroll(pw)
             if which in ("tradescap", "all"):
                 test_trades_cap(pw)
+            if which in ("marketfocus", "all"):
+                test_market_row_no_focus_jump(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
