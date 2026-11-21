@@ -1605,6 +1605,16 @@ function computeTrade() {
   if (!state) {
     return { ok: false, msg: "Masuk sebagai Guest dulu untuk mulai trading." };
   }
+  /* Input kosong tetap DIAM (null) — SEBELUM pemeriksaan harga /
+     offline. Tanpa ini, panel yang baru dibuka (belum ada ketikan
+     apa pun) sudah menampilkan error merah "Harga belum tersedia" /
+     "Harga live tidak tersedia" begitu halaman dimuat atau saat
+     offline, dan showFutError() menarik halaman ke bawah lewat
+     scrollIntoView untuk pesan "baru" itu (pernah: halaman HP
+     terbuka langsung di scrollY 2003 saat offline, tanpa user
+     mengetik apa pun). Blokir offline tetap berlaku begitu user
+     mengetik jumlah — pemeriksaan di bawah tidak berubah. */
+  if ($("amountInput").value.trim() === "") return null;
   /* parseAmount, bukan parseFloat mentah — user mengetik format
      Indonesia ("1.000.000" / "0,00089286") seperti yang ditampilkan
      aplikasi; parseFloat membaca "1.000.000" jadi Rp1. */
@@ -1624,10 +1634,9 @@ function computeTrade() {
      "abc", "1.2.3", "0"): jangan diam — pratinjau hilang tanpa pesan
      membuat input terasa mati, dan tombol Beli/Jual malah bilang
      "Masukkan jumlah dulu." padahal user sudah mengetik sesuatu.
-     Input kosong tetap diam (null) supaya panel yang baru dibuka
-     tidak menampilkan error. */
+     Input kosong sudah dikembalikan null di atas (sebelum pemeriksaan
+     harga/offline) sehingga tidak sampai ke sini. */
   if (!isFinite(raw) || raw <= 0) {
-    if ($("amountInput").value.trim() === "") return null;
     return { ok: false, msg: tradeMode === "buy"
       ? "Jumlah tidak valid — contoh: Rp100.000."
       : "Jumlah tidak valid — contoh: 0,0005 BTC." };
@@ -1766,6 +1775,13 @@ function computeFutures() {
   if (!state) {
     return { ok: false, msg: "Masuk sebagai Guest dulu untuk membuka posisi." };
   }
+  /* Margin kosong tetap DIAM (null) — SEBELUM pemeriksaan harga /
+     offline, alasan yang sama seperti computeTrade: tanpa ini panel
+     futures menampilkan error merah + menarik halaman ke bawah
+     (scrollIntoView) begitu halaman dimuat atau saat offline,
+     padahal user belum mengetik apa pun. Blokir offline tetap
+     berlaku begitu user mengetik margin. */
+  if ($("futMarginInput").value.trim() === "") return null;
   /* parseAmount, bukan parseFloat mentah — "100.000" harus dibaca
      Rp100.000, bukan Rp100 (lihat parseAmount). */
   var margin = parseAmount($("futMarginInput").value);
@@ -1779,9 +1795,9 @@ function computeFutures() {
   }
   /* Sama seperti computeTrade: input margin tidak kosong tapi tidak
      bisa dibaca sebagai angka ("Rp" saja, "abc") jangan diam — beri
-     tahu user. Input kosong tetap diam (null). */
+     tahu user. Margin kosong sudah dikembalikan null di atas
+     (sebelum pemeriksaan harga/offline) sehingga tidak sampai ke sini. */
   if (!isFinite(margin) || margin <= 0) {
-    if ($("futMarginInput").value.trim() === "") return null;
     return { ok: false, msg: "Margin tidak valid — contoh: Rp100.000." };
   }
   if (margin > state.cash) {
