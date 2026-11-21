@@ -1387,6 +1387,20 @@ function showError(msg) {
 }
 
 function hideConfirm() {
+  /* Menutup kotak konfirmasi = MEMBATALKAN pending-nya. Pending
+     milik konteks yang baru saja ditutup (ganti tab Beli/Jual,
+     ketik ulang jumlah, tombol cepat) tidak boleh tetap hidup:
+     pernah konfirmasi beli dibuka lalu ganti tab Jual — kotak
+     tersembunyi tapi _pendingTrade tetap set, dan begitu juga di
+     semua situs hideConfirm()/hideFutConfirm() lain. Hari ini
+     pending basi tidak bisa dieksekusi lewat UI (kotak hanya
+     dibuka ulang oleh tradeBtn/futBtn yang selalu menimpa pending
+     baru), tapi invarian "kotak tersembunyi ⟺ tidak ada pending"
+     harus benar di semua pemanggil. Aman bagi confirmYes dan
+     invalidateStaleConfirms: keduanya menolkan pending sebelum /
+     sesudah memanggil ini, dan executeTrade memakai argumen res,
+     bukan window._pendingTrade. */
+  window._pendingTrade = null;
   $("confirmBox").hidden = true;
   $("previewBox").hidden = true;
 }
@@ -1448,6 +1462,11 @@ function showFutError(msg) {
 }
 
 function hideFutConfirm() {
+  /* Sama seperti hideConfirm: menutup kotak konfirmasi futures =
+     membatalkan pending-nya (ganti arah Long/Short, ganti leverage
+     via slider/chip, ketik ulang margin). Aman bagi futConfirmYes
+     dan invalidateStaleConfirms (lihat hideConfirm). */
+  window._pendingFut = null;
   $("futConfirmBox").hidden = true;
   $("futPreview").hidden = true;
 }
