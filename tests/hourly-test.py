@@ -965,6 +965,47 @@ def test_stale_confirm(pw):
     finally:
         browser.close()
 
+def test_profile_name_escaped(pw):
+    """Regresi: nama profil berisi HTML harus tampil sebagai teks biasa.
+    Pernah: nama "<b>TEST</b>" tampil tebal dan "<img src=x>" jadi elemen
+    <img> sungguhan di menu profil, karena renderProfileUI memakai
+    innerHTML dengan p.name mentah. Sekarang item profil dibangun
+    dengan DOM + textContent."""
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        page.goto(BASE)
+        page.wait_for_selector("#welcomeOverlay:not([hidden])", timeout=10000)
+        page.fill("#guestNameInput", "<b>TEST</b>")
+        page.click("#guestEnterBtn")
+        page.wait_for_function("() => document.getElementById('welcomeOverlay').hidden", timeout=5000)
+        check("profile-name: header tampil literal <b>TEST</b>",
+              page.text_content("#profileName") == "<b>TEST</b>", page.text_content("#profileName"))
+        page.click("#profileBtn")
+        page.wait_for_function("() => !document.getElementById('profileMenu').hidden", timeout=5000)
+        check("profile-name: tidak ada elemen <b> di menu profil",
+              not page.evaluate("() => !!document.querySelector('#profileList .profile-item b')"),
+              page.evaluate("() => document.querySelector('#profileList .profile-item').innerHTML"))
+        check("profile-name: item menampilkan teks literal <b>TEST</b>",
+              "<b>TEST</b>" in page.evaluate("() => document.querySelector('#profileList .profile-item').textContent"))
+        page.fill("#newProfileName", "<img src=x>")
+        page.click("#createProfileBtn")
+        page.wait_for_function("() => document.querySelectorAll('#profileList .profile-item').length === 2", timeout=5000)
+        check("profile-name: tidak ada elemen <img> di menu profil",
+              not page.evaluate("() => !!document.querySelector('#profileList .profile-item img')"))
+        check("profile-name: item kedua menampilkan teks literal <img src=x>",
+              "<img src=x>" in page.evaluate("() => document.querySelectorAll('#profileList .profile-item')[1].textContent"))
+        # Ganti profil tetap jalan setelah perbaikan DOM
+        page.click("#profileBtn")
+        page.wait_for_function("() => !document.getElementById('profileMenu').hidden", timeout=5000)
+        page.evaluate("() => document.querySelectorAll('#profileList .profile-item')[0].click()")
+        page.wait_for_function("() => document.getElementById('profileName').textContent === '<b>TEST</b>'", timeout=5000)
+        check("profile-name: ganti profil ke <b>TEST</b> tetap jalan",
+              page.text_content("#profileName") == "<b>TEST</b>", page.text_content("#profileName"))
+        check("0 error JS (profile-name)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -975,6 +1016,7 @@ def main():
                 test_mobile_live(pw)
                 test_sell_max(pw)
                 test_tab_switch_clears_input(pw)
+                test_profile_name_escaped(pw)
             if which in ("offline", "all"):
                 test_offline(pw)
                 test_spot_offline_blocked(pw)
