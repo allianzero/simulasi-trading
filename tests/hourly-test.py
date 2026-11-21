@@ -1237,6 +1237,92 @@ def test_reset_armed_profile_switch(pw):
     finally:
         browser.close()
 
+def test_profile_switch_clears_trade_context(pw):
+    """Ganti/buat profil harus membersihkan konteks trade profil lama.
+    Pernah: ketik jual 0,0005 BTC di profil A (punya BTC) lalu buat
+    profil B — input "0.0005" + margin "100000" terbawa dan renderAll()
+    di B langsung menampilkan error "Koin tidak cukup. Kamu punya 0
+    BTC." di profil baru yang belum melakukan apa-apa; _pendingTrade
+    dari A juga tetap set. Harus: input + margin kosong, error hilang,
+    pending dinolkan, kotak konfirmasi tersembunyi — di profil baru
+    maupun saat kembali ke profil lama."""
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        if "simple/price" in route.request.url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in route.request.url:
+            mock_chart(route)
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        # Profil A: beli BTC Rp1.000.000
+        page.fill("#amountInput", "1000000")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(400)
+        check("profile-ctx: profil A kas Rp4.000.000 setelah beli",
+              "4.000.000" in cash_text(page), cash_text(page))
+        # Isi konteks trade A: jual 0,0005 (valid di A) + margin + konfirmasi terbuka
+        page.click("#tabSell")
+        page.fill("#amountInput", "0.0005")
+        page.fill("#futMarginInput", "100000")
+        page.wait_for_timeout(300)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        check("profile-ctx: konfirmasi jual terbuka di A + pending ada",
+              page.evaluate("() => !!window._pendingTrade"))
+        # Buat profil B selagi konfirmasi terbuka
+        page.click("#profileBtn")
+        page.fill("#newProfileName", "ProfilB")
+        page.click("#createProfileBtn")
+        page.wait_for_timeout(500)
+        check("profile-ctx: pindah ke profil B",
+              page.text_content("#profileName") == "ProfilB", page.text_content("#profileName"))
+        check("profile-ctx: input jumlah kosong di B",
+              page.input_value("#amountInput") == "", repr(page.input_value("#amountInput")))
+        check("profile-ctx: input margin kosong di B",
+              page.input_value("#futMarginInput") == "", repr(page.input_value("#futMarginInput")))
+        check("profile-ctx: TIDAK ada error 'Koin tidak cukup' di B",
+              page.evaluate("() => document.getElementById('tradeError').hidden"),
+              page.text_content("#tradeError"))
+        check("profile-ctx: pending trade dinolkan di B",
+              page.evaluate("() => window._pendingTrade === null"))
+        check("profile-ctx: kotak konfirmasi tersembunyi di B",
+              page.evaluate("() => document.getElementById('confirmBox').hidden"))
+        # Kembali ke A: data A utuh, tapi konteks trade-nya juga bersih
+        page.click("#profileBtn")
+        page.wait_for_timeout(200)
+        page.locator("#profileList .profile-item").first.click()
+        page.wait_for_timeout(300)
+        check("profile-ctx: kembali ke A, kas tetap Rp4.000.000",
+              "4.000.000" in cash_text(page), cash_text(page))
+        check("profile-ctx: input jumlah juga kosong saat kembali ke A",
+              page.input_value("#amountInput") == "", repr(page.input_value("#amountInput")))
+        check("profile-ctx: TIDAK ada error saat kembali ke A",
+              page.evaluate("() => document.getElementById('tradeError').hidden"),
+              page.text_content("#tradeError"))
+        check("0 error JS (profile-ctx)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_micro_sell_quick(pw):
     """Tombol cepat jual pada holding mikro (< 1 satoshi) tidak boleh
     mati. Pernah: beli Rp10 BTC @ Rp1.120.000.000 -> holding
@@ -1590,6 +1676,8 @@ def main():
                 test_id_number_format(pw)
             if which in ("resetarmed", "all"):
                 test_reset_armed_profile_switch(pw)
+            if which in ("profilectx", "all"):
+                test_profile_switch_clears_trade_context(pw)
             if which in ("microsell", "all"):
                 test_micro_sell_quick(pw)
             if which in ("offline", "all"):
