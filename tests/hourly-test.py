@@ -1608,6 +1608,77 @@ def test_id_number_format(pw):
     finally:
         browser.close()
 
+def test_id_rp_prefix(pw):
+    """Input harus menerima awalan "Rp" seperti yang ditampilkan
+    aplikasi ("Rp1.000.000" / "Rp100.000"). Pernah: ketik persis
+    seperti tampilan -> parseAmount mengembalikan NaN, pratinjau
+    diam-diam hilang TANPA pesan error apa pun (bukan error, bukan
+    pratinjau). Harus: "Rp1.000.000", "Rp 100.000", "rp 500.000"
+    terbaca benar; "Rp" saja tetap tidak valid."""
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        if "simple/price" in route.request.url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in route.request.url:
+            mock_chart(route)
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        # Beli ketik "Rp1.000.000" (persis seperti tampilan aplikasi)
+        page.fill("#amountInput", "Rp1.000.000")
+        page.wait_for_timeout(300)
+        check("rp-prefix: beli 'Rp1.000.000' pratinjau tampil Rp1.000.000",
+              page.is_visible("#previewBox") and "1.000.000" in page.text_content("#previewBox"),
+              page.text_content("#previewBox").replace("\n", " ")[:140] if page.is_visible("#previewBox") else
+              (page.text_content("#tradeError") if page.is_visible("#tradeError") else "pratinjau sembunyi"))
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function("() => document.getElementById('cashBalance').textContent.includes('4.000.000')", timeout=5000)
+        check("rp-prefix: beli 'Rp1.000.000' tereksekusi, kas Rp4.000.000",
+              "4.000.000" in cash_text(page), cash_text(page))
+        # Margin futures ketik "Rp 100.000" (spasi setelah Rp)
+        page.fill("#futMarginInput", "Rp 100.000")
+        page.wait_for_timeout(300)
+        fut_txt = page.text_content("#futPreview")
+        check("rp-prefix: margin 'Rp 100.000' pratinjau margin Rp100.000",
+              page.is_visible("#futPreview") and "Rp\u00a0100.000" in fut_txt,
+              fut_txt.replace("\n", " ")[:160])
+        check("rp-prefix: margin 'Rp 100.000' notional Rp1.000.000",
+              "Rp\u00a01.000.000" in fut_txt, fut_txt.replace("\n", " ")[:160])
+        # Margin "rp 500.000" (huruf kecil) juga jalan
+        page.fill("#futMarginInput", "rp 500.000")
+        page.wait_for_timeout(300)
+        fut_txt = page.text_content("#futPreview")
+        check("rp-prefix: margin 'rp 500.000' pratinjau margin Rp500.000",
+              page.is_visible("#futPreview") and "Rp\u00a0500.000" in fut_txt,
+              fut_txt.replace("\n", " ")[:160])
+        # "Rp" saja tetap tidak valid (bukan angka)
+        page.fill("#futMarginInput", "Rp")
+        page.wait_for_timeout(300)
+        check("rp-prefix: margin 'Rp' saja tidak menampilkan pratinjau",
+              page.is_hidden("#futPreview"),
+              page.text_content("#futPreview").replace("\n", " ")[:80] if page.is_visible("#futPreview") else "pratinjau sembunyi")
+        check("0 error JS (rp-prefix)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_fut_error_no_repeat_scroll(pw):
     """Error futures yang sama tidak boleh mengguncang + scroll ulang.
 
@@ -1887,6 +1958,7 @@ def main():
                 test_profile_name_escaped(pw)
                 test_overlapping_confirms(pw)
                 test_id_number_format(pw)
+                test_id_rp_prefix(pw)
             if which in ("resetarmed", "all"):
                 test_reset_armed_profile_switch(pw)
             if which in ("profilectx", "all"):
