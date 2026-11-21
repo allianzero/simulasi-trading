@@ -1959,6 +1959,15 @@ $("tabSell").addEventListener("click", function () {
 $("amountInput").addEventListener("input", function () {
   hideConfirm(); updatePreview();
 });
+/* Enter di input jumlah = klik tombol Beli/Jual (alur keyboard yang
+   paling wajar — sama seperti Enter di input nama profil). Pernah:
+   ketik jumlah lalu tekan Enter tidak terjadi apa-apa, user harus
+   menggerakkan mouse ke tombol. Handler klik yang sama dipakai
+   ulang, jadi input kosong tetap menampilkan "Masukkan jumlah
+   dulu." seperti biasa. */
+$("amountInput").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") $("tradeBtn").click();
+});
 
 $("quickRow").addEventListener("click", function (e) {
   var btn = e.target.closest("[data-pct]");
@@ -2040,6 +2049,13 @@ $("levChips").addEventListener("click", function (e) {
 });
 $("futMarginInput").addEventListener("input", function () {
   hideFutConfirm(); updateFutPreview();
+});
+/* Enter di input margin = klik tombol Buka Long/Short (alur keyboard
+   yang sama seperti input jumlah spot di atas). Pernah: ketik margin
+   lalu tekan Enter tidak terjadi apa-apa. Margin kosong tetap
+   menampilkan "Masukkan margin dulu." seperti biasa. */
+$("futMarginInput").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") $("futBtn").click();
 });
 
 $("futBtn").addEventListener("click", function () {
