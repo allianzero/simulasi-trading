@@ -1794,6 +1794,86 @@ def test_market_row_no_focus_jump(pw):
     finally:
         browser.close()
 
+def test_pending_cleared_on_hide(pw):
+    """Regresi: menutup kotak konfirmasi MEMBATALKAN pending-nya.
+    Pernah: konfirmasi beli dibuka lalu ganti tab Beli/Jual, ketik
+    ulang jumlah, atau klik tombol cepat — kotak tersembunyi tapi
+    _pendingTrade tetap set; begitu juga _pendingFut saat ganti arah
+    Long/Short, ganti leverage (slider/chip), atau ketik ulang
+    margin. Hari ini pending basi tidak bisa dieksekusi lewat UI,
+    tapi invarian "kotak tersembunyi <=> tidak ada pending" harus
+    benar di semua situs hideConfirm()/hideFutConfirm()."""
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        enter_guest(page)
+        def pending():
+            return page.evaluate("() => ({ trade: !!window._pendingTrade, fut: !!window._pendingFut })")
+        def open_trade_confirm():
+            page.fill("#amountInput", "1000000")
+            page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+            page.click("#tradeBtn")
+            page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        def open_fut_confirm():
+            page.fill("#futMarginInput", "100000")
+            page.wait_for_selector("#futPreview:not([hidden])", timeout=5000)
+            page.click("#futBtn")
+            page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        # 1. Ganti tab Beli -> Jual
+        open_trade_confirm()
+        check("pending-hide: pending trade ada setelah Beli", pending()["trade"])
+        page.click("#tabSell")
+        page.wait_for_timeout(300)
+        check("pending-hide: ganti tab Jual -> pending trade dinolkan",
+              not pending()["trade"], str(pending()))
+        check("pending-hide: ganti tab -> kotak konfirmasi tersembunyi",
+              page.evaluate("() => document.getElementById('confirmBox').hidden"))
+        # 2. Ketik ulang jumlah
+        page.click("#tabBuy")
+        open_trade_confirm()
+        page.fill("#amountInput", "500000")
+        page.wait_for_timeout(300)
+        check("pending-hide: ketik ulang jumlah -> pending trade dinolkan",
+              not pending()["trade"], str(pending()))
+        # 3. Klik tombol cepat 25%
+        open_trade_confirm()
+        page.click('.quick-btn[data-pct="25"], #quickRow [data-pct="25"]')
+        page.wait_for_timeout(300)
+        check("pending-hide: klik tombol cepat -> pending trade dinolkan",
+              not pending()["trade"], str(pending()))
+        # 4. Ganti arah Long -> Short
+        page.click("#futLong")
+        open_fut_confirm()
+        check("pending-hide: pending futures ada setelah Buka Long", pending()["fut"])
+        page.click("#futShort")
+        page.wait_for_timeout(300)
+        check("pending-hide: ganti arah Short -> pending futures dinolkan",
+              not pending()["fut"], str(pending()))
+        # 5. Ubah leverage via chip
+        page.click("#futLong")
+        open_fut_confirm()
+        page.click('.lev-chip[data-lev="25"]')
+        page.wait_for_timeout(300)
+        check("pending-hide: chip leverage 25x -> pending futures dinolkan",
+              not pending()["fut"], str(pending()))
+        # 6. Ketik ulang margin
+        open_fut_confirm()
+        page.fill("#futMarginInput", "50000")
+        page.wait_for_timeout(300)
+        check("pending-hide: ketik ulang margin -> pending futures dinolkan",
+              not pending()["fut"], str(pending()))
+        # Alur normal tetap jalan: konfirmasi Ya mengeksekusi trade
+        open_trade_confirm()
+        page.click("#confirmYes")
+        page.wait_for_timeout(500)
+        check("pending-hide: konfirmasi Ya tetap mengeksekusi beli",
+              "4.000.000" in cash_text(page), cash_text(page))
+        check("pending-hide: setelah eksekusi, pending trade null",
+              not pending()["trade"], str(pending()))
+        check("0 error JS (pending-hide)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -1844,6 +1924,8 @@ def main():
                 test_market_row_no_focus_jump(pw)
             if which in ("coinctx", "all"):
                 test_coin_switch_clears_trade_context(pw)
+            if which in ("pendinghide", "all"):
+                test_pending_cleared_on_hide(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
