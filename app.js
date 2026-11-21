@@ -1520,6 +1520,35 @@ function updatePreview() {
 }
 
 function executeTrade(res) {
+  /* Validasi ulang saat eksekusi: konfirmasi bisa dibuka lalu
+     eksekusinya ditunda sementara user memakai kas di panel lain
+     (mis. buka posisi futures setelah konfirmasi beli dibuka, atau
+     sebaliknya) — tanpa ini kas bisa MINUS. Pernah: konfirmasi beli
+     Rp4.950.000 + konfirmasi futures margin Rp100.000, futures
+     dikonfirmasi dulu (kas Rp4.900.000), lalu beli dikonfirmasi →
+     kas −Rp50.000. */
+  if (tradeMode === "buy" && res.amount > state.cash) {
+    hideConfirm();
+    showError("Saldo kas tidak cukup. Kas tersedia: " + fmtIDR(state.cash) + ".");
+    showToast("Saldo kas tidak cukup — trade dibatalkan.", "error");
+    renderAll();
+    return;
+  }
+  if (tradeMode === "sell") {
+    var ownedNow = holdingsAmount(selectedSymbol);
+    var epsNow = Math.max(1e-8, ownedNow * 1e-9);
+    if (res.coins > ownedNow && res.coins - ownedNow <= epsNow) {
+      res.coins = ownedNow;
+      res.amount = ownedNow;
+      res.total = ownedNow * res.price;
+    } else if (res.coins > ownedNow) {
+      hideConfirm();
+      showError("Koin tidak cukup. Kamu punya " + fmtCoin(ownedNow) + " " + selectedSymbol + ".");
+      showToast("Koin tidak cukup — trade dibatalkan.", "error");
+      renderAll();
+      return;
+    }
+  }
   var now = Date.now();
   var id = "t" + now + Math.floor(Math.random() * 1000);
   if (tradeMode === "buy") {
@@ -1598,6 +1627,16 @@ function updateFutPreview() {
 }
 
 function openFutures(res) {
+  /* Validasi ulang saat eksekusi: margin bisa melebihi kas bila kas
+     dipakai di panel lain setelah konfirmasi dibuka (mis. beli spot
+     dulu) — tanpa ini kas bisa MINUS (lihat executeTrade). */
+  if (res.margin > state.cash) {
+    hideFutConfirm();
+    showFutError("Margin melebihi saldo kas. Kas tersedia: " + fmtIDR(state.cash) + ".");
+    showToast("Margin melebihi saldo kas — posisi dibatalkan.", "error");
+    renderAll();
+    return;
+  }
   var now = Date.now();
   var id = "f" + now + Math.floor(Math.random() * 1000);
   state.cash -= res.margin;
