@@ -2345,6 +2345,91 @@ def test_quick_zero_feedback(pw):
     finally:
         browser.close()
 
+def test_invalid_input(pw):
+    """Regresi: input tidak valid memberi pesan, bukan diam. Pernah:
+    ketik "Rp" saja / "abc" / "1.2.3" di input jumlah spot -> pratinjau
+    hilang tanpa pesan apa pun, dan klik Beli malah menampilkan
+    "Masukkan jumlah dulu." yang menyesatkan (user sudah mengetik).
+    Sama di input margin futures ("Rp" -> diam, klik Buka ->
+    "Masukkan margin dulu."). Input kosong tetap diam (tanpa error)."""
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        enter_guest(page)
+        def err():
+            return page.text_content("#tradeError")
+        def err_vis():
+            return page.evaluate(
+                "() => !document.getElementById('tradeError').hidden")
+        def fut_err():
+            return page.text_content("#futError")
+        def fut_err_vis():
+            return page.evaluate(
+                "() => !document.getElementById('futError').hidden")
+        # 1. Spot: "Rp" saja -> pesan "tidak valid", pratinjau tersembunyi
+        page.fill("#amountInput", "Rp")
+        page.wait_for_timeout(300)
+        check("invalid-input: ketik 'Rp' -> pesan error tampil",
+              err_vis(), err())
+        check("invalid-input: pesannya menyebut tidak valid",
+              "tidak valid" in err(), err())
+        check("invalid-input: pratinjau tetap tersembunyi",
+              page.is_hidden("#previewBox"))
+        # 2. Spot: "abc" dan "1.2.3" juga berpesan
+        for txt in ("abc", "1.2.3"):
+            page.fill("#amountInput", txt)
+            page.wait_for_timeout(200)
+            check("invalid-input: ketik %r -> pesan tidak valid" % txt,
+                  err_vis() and "tidak valid" in err(), err())
+        # 3. Klik Beli dengan input tidak valid -> bukan "Masukkan jumlah dulu."
+        page.fill("#amountInput", "abc")
+        page.click("#tradeBtn")
+        page.wait_for_timeout(200)
+        check("invalid-input: klik Beli 'abc' -> pesan tidak valid, bukan 'Masukkan jumlah dulu.'",
+              "tidak valid" in err() and "Masukkan jumlah dulu" not in err(), err())
+        check("invalid-input: kotak konfirmasi tidak muncul",
+              page.is_hidden("#confirmBox"))
+        # 4. Kontrol: input kosong tetap diam (tanpa error)
+        page.fill("#amountInput", "")
+        page.wait_for_timeout(200)
+        check("invalid-input: input kosong -> tanpa error",
+              page.is_hidden("#tradeError"))
+        # 5. Kontrol: input valid tetap jalan
+        page.fill("#amountInput", "100000")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        check("invalid-input: input valid '100000' -> pratinjau tampil",
+              not page.is_hidden("#previewBox"))
+        check("invalid-input: input valid -> tanpa error",
+              page.is_hidden("#tradeError"))
+        # 6. Futures: "Rp" saja di margin -> pesan "Margin tidak valid"
+        page.fill("#futMarginInput", "Rp")
+        page.wait_for_timeout(300)
+        check("invalid-input: margin 'Rp' -> pesan error tampil",
+              fut_err_vis(), fut_err())
+        check("invalid-input: pesannya menyebut Margin tidak valid",
+              "Margin tidak valid" in fut_err(), fut_err())
+        check("invalid-input: pratinjau futures tersembunyi",
+              page.is_hidden("#futPreview"))
+        # 7. Klik Buka dengan margin tidak valid -> bukan "Masukkan margin dulu"
+        page.click("#futBtn")
+        page.wait_for_timeout(200)
+        check("invalid-input: klik Buka margin 'Rp' -> pesan tidak valid",
+              "Margin tidak valid" in fut_err(), fut_err())
+        check("invalid-input: kotak konfirmasi futures tidak muncul",
+              page.is_hidden("#futConfirmBox"))
+        # 8. Kontrol futures: margin kosong diam, margin valid jalan
+        page.fill("#futMarginInput", "")
+        page.wait_for_timeout(200)
+        check("invalid-input: margin kosong -> tanpa error",
+              page.is_hidden("#futError"))
+        page.fill("#futMarginInput", "100000")
+        page.wait_for_selector("#futPreview:not([hidden])", timeout=5000)
+        check("invalid-input: margin valid '100000' -> pratinjau tampil",
+              not page.is_hidden("#futPreview"))
+        check("0 error JS (invalid-input)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -2407,6 +2492,8 @@ def main():
                 test_double_enter_profile(pw)
             if which in ("quickzero", "all"):
                 test_quick_zero_feedback(pw)
+            if which in ("invalidinput", "all"):
+                test_invalid_input(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
