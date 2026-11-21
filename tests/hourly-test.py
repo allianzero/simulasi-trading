@@ -228,8 +228,17 @@ def test_offline(pw):
         check("offline: badge HARGA CONTOH (OFFLINE)",
               "CONTOH" in page.text_content("#priceBadgeText"), page.text_content("#priceBadgeText"))
         check("offline: banner tampil", page.locator("#offlineBanner:not([hidden])").count() == 1)
-        check("offline: harga BTC = harga contoh 1,5 Miliar",
-              "1.500.000.000" in page.text_content("#tradePrice"), page.text_content("#tradePrice"))
+        # Daftar pasar tetap menampilkan harga contoh (berlabel OFFLINE
+        # oleh badge + banner) — tapi panel trade/futures TIDAK BOLEH
+        # menampilkan harga contoh sebagai "Harga saat ini"/"Harga mark":
+        # belum pernah ada harga live -> panel menampilkan "—"
+        # (konsisten dengan holding/PnL yang menampilkan "—").
+        check("offline: daftar pasar menampilkan harga contoh 1,5 Miliar",
+              "1.500.000.000" in page.text_content("#marketList"), page.text_content("#marketList")[:120])
+        check("offline: panel trade/futures '—' (bukan harga contoh) bila belum pernah ada harga live",
+              page.text_content("#tradePrice").strip() == "—" and
+              page.text_content("#futPrice").strip() == "—",
+              "trade=" + page.text_content("#tradePrice") + " fut=" + page.text_content("#futPrice"))
         # Coba buka posisi futures saat offline — HARUS DIBLOKIR (bukan entry harga contoh)
         page.fill("#futMarginInput", "100000")
         page.click("#futBtn")
@@ -1064,6 +1073,77 @@ def test_overlapping_confirms(pw):
     finally:
         browser.close()
 
+def test_panel_mark_offline(pw):
+    """Regresi: 'Harga saat ini' (spot) + 'Harga mark' (futures) di panel
+    TIDAK BOLEH menampilkan harga contoh saat offline (pernah: panel
+    menampilkan Rp1.500.000.000 sebagai 'Harga mark', padahal kartu
+    posisi di seksi yang sama menampilkan mark beku Rp1.120.000.000 —
+    dua angka bertentangan dalam satu kartu). Harus beku di harga
+    live terakhir + label '(harga live terakhir)'."""
+    mode = {"offline": False}
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        if mode["offline"]:
+            route.abort()
+        elif "simple/price" in route.request.url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in route.request.url:
+            mock_chart(route)
+        else:
+            route.abort()
+
+    def bn(route):
+        route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", bn)
+    page.route("**/api.binance.com/**", bn)
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        check("panel-mark: harga panel live Rp1.120.000.000",
+              "1.120.000.000" in page.text_content("#futPrice") and
+              "1.120.000.000" in page.text_content("#tradePrice"),
+              page.text_content("#futPrice") + " / " + page.text_content("#tradePrice"))
+        page.fill("#futMarginInput", "100000")
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        page.click("#futConfirmYes")
+        page.wait_for_function(
+            "() => document.querySelectorAll('#futPositions .position-row').length === 1",
+            timeout=5000)
+        mode["offline"] = True
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA CONTOH (OFFLINE)'",
+            timeout=15000)
+        fut = page.text_content("#futPrice")
+        trade = page.text_content("#tradePrice")
+        pos = page.text_content("#futPositions")
+        check("panel-mark: 'Harga mark' offline BUKAN harga contoh Rp1.500.000.000",
+              "1.500.000.000" not in fut, fut)
+        check("panel-mark: 'Harga mark' offline beku Rp1.120.000.000 + label",
+              "1.120.000.000" in fut and "harga live terakhir" in fut, fut)
+        check("panel-mark: 'Harga saat ini' offline BUKAN harga contoh Rp1.500.000.000",
+              "1.500.000.000" not in trade, trade)
+        check("panel-mark: 'Harga saat ini' offline beku Rp1.120.000.000 + label",
+              "1.120.000.000" in trade and "harga live terakhir" in trade, trade)
+        check("panel-mark: mark kartu posisi tetap sama dengan panel (Rp1.120.000.000)",
+              "1.120.000.000" in pos and "1.500.000.000" not in pos, pos[:120])
+        check("0 error JS (panel-mark)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -1097,6 +1177,8 @@ def main():
                 test_partial_coingecko(pw)
             if which in ("stale", "all"):
                 test_stale_confirm(pw)
+            if which in ("panelmark", "all"):
+                test_panel_mark_offline(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
