@@ -1424,6 +1424,95 @@ def test_id_number_format(pw):
     finally:
         browser.close()
 
+def test_fut_error_no_repeat_scroll(pw):
+    """Error futures yang sama tidak boleh mengguncang + scroll ulang.
+
+    Pernah: showFutError() mengguncang + scrollIntoView di SETIAP
+    panggilan, padahal updateFutPreview() dipanggil tiap renderAll
+    (refresh harga 30 detik) dan tiap ketik di input margin. Saat
+    offline dengan margin terisi, satu renderAll menarik halaman HP
+    dari scrollY 0 ke 2004 dan scrollIntoView terpanggil lagi —
+    user yang sedang membaca pasar ketarik ke bawah tiap 30 detik.
+    Perbaikan: shake + scroll hanya bila pesannya BARU.
+    """
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 390, "height": 844}, "offline", {"live": {}})
+    try:
+        page.add_init_script(
+            "window.__sivCount = 0;"
+            "var _siv = Element.prototype.scrollIntoView;"
+            "Element.prototype.scrollIntoView = function() {"
+            "  window.__sivCount++; return _siv.apply(this, arguments); };")
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent.includes('CONTOH')",
+            timeout=15000)
+        page.fill("#futMarginInput", "100000")
+        page.wait_for_selector("#futError:not([hidden])", timeout=5000)
+        check("futerr: error offline tampil saat margin diisi (HP)",
+              "Harga live tidak tersedia" in page.text_content("#futError"),
+              page.text_content("#futError")[:90])
+        page.wait_for_timeout(400)
+        siv_after_fill = page.evaluate("() => window.__sivCount")
+        check("futerr: error pertama mengguncang + scroll (umpan balik awal)",
+              siv_after_fill >= 1 and page.evaluate(
+                  "() => document.getElementById('futError').classList.contains('shake')"),
+              f"siv={siv_after_fill}")
+        # User scroll ke atas (lagi baca pasar), lalu render ulang
+        # seperti refresh harga 30 detik.
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.wait_for_timeout(600)
+        siv0 = page.evaluate("() => window.__sivCount")
+        page.evaluate("() => renderAll()")
+        page.wait_for_timeout(900)
+        check("futerr: render ulang (refresh 30 detik) TIDAK memanggil scrollIntoView lagi",
+              page.evaluate("() => window.__sivCount") == siv0,
+              f"siv {siv0} -> {page.evaluate('() => window.__sivCount')}")
+        check("futerr: halaman TIDAK ketarik ke bawah oleh render ulang",
+              page.evaluate("() => window.scrollY") == 0,
+              f"scrollY={page.evaluate('() => window.scrollY')}")
+        # Ketik satu karakter lagi di margin (input event).
+        page.type("#futMarginInput", "0", delay=50)
+        page.wait_for_timeout(900)
+        check("futerr: ketik di margin TIDAK memanggil scrollIntoView lagi",
+              page.evaluate("() => window.__sivCount") == siv0,
+              f"siv {siv0} -> {page.evaluate('() => window.__sivCount')}")
+        check("futerr: error offline tetap tampil dengan pesan yang sama",
+              page.is_visible("#futError") and
+              "Harga live tidak tersedia" in page.text_content("#futError"),
+              page.text_content("#futError")[:90])
+        check("0 error JS (futerr)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+    # Jalur tombol tetap memberi umpan balik: pesan BARU harus
+    # mengguncang + scroll. Dicek di skenario LIVE (saat offline,
+    # computeFutures selalu mengembalikan error offline sehingga
+    # pesan "Masukkan margin dulu" tidak pernah muncul).
+    browser2, ctx2, page2, errors2 = new_page(
+        pw, {"width": 390, "height": 844}, "live", {"live": LIVE})
+    try:
+        page2.add_init_script(
+            "window.__sivCount = 0;"
+            "var _siv = Element.prototype.scrollIntoView;"
+            "Element.prototype.scrollIntoView = function() {"
+            "  window.__sivCount++; return _siv.apply(this, arguments); };")
+        enter_guest(page2)
+        page2.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        page2.wait_for_timeout(400)
+        siv_before = page2.evaluate("() => window.__sivCount")
+        page2.click("#futBtn")
+        page2.wait_for_timeout(500)
+        check("futerr: klik tombol + pesan baru tetap mengguncang + scroll",
+              page2.evaluate("() => window.__sivCount") > siv_before and page2.evaluate(
+                  "() => document.getElementById('futError').classList.contains('shake')") and
+              "Masukkan margin dulu" in page2.text_content("#futError"),
+              f"siv={page2.evaluate('() => window.__sivCount')}")
+        check("0 error JS (futerr-live)", len(errors2) == 0, "; ".join(errors2[:3]))
+    finally:
+        browser2.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -1464,6 +1553,8 @@ def main():
                 test_stale_confirm(pw)
             if which in ("panelmark", "all"):
                 test_panel_mark_offline(pw)
+            if which in ("futerr", "all"):
+                test_fut_error_no_repeat_scroll(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
