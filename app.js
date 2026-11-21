@@ -216,10 +216,28 @@ function fmtPct(n) {
 /* Jumlah koin: desimal menyesuaikan besarnya angka */
 function fmtCoin(n) {
   if (!isFinite(n)) return "—";
-  var dec = n >= 1000 ? 2 : n >= 1 ? 4 : n >= 0.01 ? 6 : 8;
+  /* < 1 satoshi (mis. 0,0000000089 BTC dari beli Rp10) butuh 12
+     desimal — dengan 8 desimal tampil "0" sehingga riwayat jual
+     terbaca "0 BTC" padahal ada koin yang terjual. */
+  var dec = n >= 1000 ? 2 : n >= 1 ? 4 : n >= 0.01 ? 6 : n >= 1e-8 ? 8 : 12;
   return n.toLocaleString("id-ID", {
     minimumFractionDigits: 0, maximumFractionDigits: dec
   });
+}
+
+/* Jumlah koin untuk diisi ke input jual (tombol cepat): string
+   desimal biasa, desimal secukupnya. toFixed(8) membulatkan
+   holding mikro (< 1 satoshi, mis. beli Rp10 BTC = 0,0000000089
+   BTC) jadi 0 sehingga tombol cepat 25%/50% mengisi "0" dan tidak
+   terjadi apa-apa; Number(...) juga menampilkan "1e-8" (notasi
+   ilmiah) untuk 75%/100%. Nilai yang dikembalikan tidak pernah 0
+   bila koinnya > 0, dan tidak pernah notasi ilmiah. */
+function fmtInputCoins(coins) {
+  if (!(coins > 0) || !isFinite(coins)) return "";
+  var dec = 8;
+  var s = coins.toFixed(dec);
+  while (Number(s) === 0 && dec < 18) { dec++; s = coins.toFixed(dec); }
+  return s.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
 }
 
 /* Angka ringkas untuk sumbu grafik, mis. Rp5,2 jt / Rp1,13 M */
@@ -1818,7 +1836,11 @@ $("quickRow").addEventListener("click", function (e) {
     $("amountInput").value = Math.floor(state.cash * pct);
   } else {
     var coins = holdingsAmount(selectedSymbol) * pct;
-    $("amountInput").value = coins > 0 ? Number(coins.toFixed(8)) : "";
+    /* JANGAN Number(coins.toFixed(8)): holding mikro (< 1 satoshi)
+       dibulatkan jadi 0 sehingga tombol 25%/50% mengisi "0" dan
+       tidak terjadi apa-apa; untuk 75%/100% tampil "1e-8" (notasi
+       ilmiah). fmtInputCoins memakai desimal secukupnya. */
+    $("amountInput").value = fmtInputCoins(coins);
   }
   hideConfirm();
   updatePreview();
