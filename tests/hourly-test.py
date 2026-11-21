@@ -1006,6 +1006,64 @@ def test_profile_name_escaped(pw):
     finally:
         browser.close()
 
+def test_overlapping_confirms(pw):
+    """Konfirmasi spot + futures yang tumpang tindih tidak boleh bikin kas minus.
+    Buka konfirmasi BELI Rp4.950.000, lalu konfirmasi futures margin Rp100.000,
+    konfirmasi futures dulu (kas 4.900.000), lalu konfirmasi spot -> harus
+    DIBATALKAN (kas tetap 4.900.000, tanpa trade). Arah sebaliknya juga dicek:
+    konfirmasi futures margin Rp100.000 tertahan, beli spot Rp4.950.000 dulu,
+    lalu konfirmasi futures -> dibatalkan, tanpa posisi baru."""
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        enter_guest(page)
+        # Arah 1: spot tertahan, futures jalan dulu, spot dibatalkan
+        page.fill("#amountInput", "4950000")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.fill("#futMarginInput", "100000")
+        page.wait_for_selector("#futPreview:not([hidden])", timeout=5000)
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        page.click("#futConfirmYes")
+        page.wait_for_timeout(500)
+        check("overlap: kas Rp4.900.000 setelah futures dikonfirmasi", "4.900.000" in cash_text(page), cash_text(page))
+        page.click("#confirmYes")
+        page.wait_for_timeout(500)
+        check("overlap: beli tertahan DIBATALKAN, kas tetap Rp4.900.000 (tidak -Rp50.000)",
+              "4.900.000" in cash_text(page) and "-Rp" not in cash_text(page), cash_text(page))
+        check("overlap: riwayat tanpa BELI Rp4.950.000",
+              "4.950.000" not in page.text_content("#tradeHistory"), page.text_content("#tradeHistory")[:120])
+        check("overlap: tanpa holding spot (beli batal)", "Belum ada koin" in page.text_content("#holdingsList"),
+              page.text_content("#holdingsList")[:80])
+        # Arah 2: futures tertahan, spot jalan dulu, futures dibatalkan
+        page.click("#resetBtn")
+        page.wait_for_timeout(300)
+        page.click("#resetBtn")
+        page.wait_for_timeout(500)
+        check("overlap: reset, kas kembali Rp5.000.000", "5.000.000" in cash_text(page), cash_text(page))
+        page.fill("#futMarginInput", "100000")
+        page.wait_for_selector("#futPreview:not([hidden])", timeout=5000)
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        page.fill("#amountInput", "4950000")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(500)
+        check("overlap: kas Rp50.000 setelah beli Rp4.950.000", "50.000" in cash_text(page), cash_text(page))
+        page.click("#futConfirmYes")
+        page.wait_for_timeout(500)
+        check("overlap: futures tertahan DIBATALKAN, tanpa posisi baru",
+              "Belum ada posisi futures" in page.text_content("#futPositions"), page.text_content("#futPositions")[:80])
+        check("overlap: kas tetap Rp50.000 (tidak minus)", "50.000" in cash_text(page) and "-Rp" not in cash_text(page),
+              cash_text(page))
+        check("0 error JS (overlap-confirms)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -1017,6 +1075,7 @@ def main():
                 test_sell_max(pw)
                 test_tab_switch_clears_input(pw)
                 test_profile_name_escaped(pw)
+                test_overlapping_confirms(pw)
             if which in ("offline", "all"):
                 test_offline(pw)
                 test_spot_offline_blocked(pw)
