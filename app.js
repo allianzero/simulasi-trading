@@ -1992,11 +1992,41 @@ $("quickRow").addEventListener("click", function (e) {
   if (!state) return;
   var pct = parseFloat(btn.getAttribute("data-pct")) / 100;
   var price = currentPrice();
-  if (!price) return;
+  if (!price) {
+    /* Harga belum tersedia (mis. tombol ditekan sesaat setelah halaman
+       dimuat): jangan diam — beri tahu seperti computeTrade. */
+    showError("Harga belum tersedia — tekan Refresh.");
+    showToast("Harga belum tersedia — tekan Refresh.", "error");
+    return;
+  }
   if (tradeMode === "buy") {
-    $("amountInput").value = Math.floor(state.cash * pct);
+    var rupiah = Math.floor(state.cash * pct);
+    /* Kas habis (atau terlalu kecil sehingga bagiannya jadi Rp0):
+       tombol cepat sebelumnya diam-diam mengisi "0" tanpa pratinjau
+       dan tanpa pesan apa pun, sehingga tombol terasa mati. Beri tahu
+       user kenapa tidak ada yang bisa dibeli (umpan balik ganda:
+       teks merah + toast, pola yang sama seperti tombol Buka Long
+       dengan margin kosong). */
+    if (rupiah <= 0) {
+      $("amountInput").value = "";
+      showError("Jumlah terlalu kecil — kas tersedia: " + fmtIDR(state.cash) + ".");
+      showToast("Jumlah terlalu kecil — kas tersedia: " + fmtIDR(state.cash) + ".", "error");
+      hideConfirm();
+      return;
+    }
+    $("amountInput").value = rupiah;
   } else {
     var coins = holdingsAmount(selectedSymbol) * pct;
+    /* Belum punya koinnya: tombol cepat sebelumnya mengisi "" tanpa
+       pratinjau dan tanpa pesan apa pun, sehingga tombol terasa mati.
+       Beri tahu user kenapa tidak ada yang bisa dijual. */
+    if (!(coins > 0) || !isFinite(coins)) {
+      $("amountInput").value = "";
+      showError("Kamu belum punya " + selectedSymbol + " untuk dijual.");
+      showToast("Kamu belum punya " + selectedSymbol + " untuk dijual.", "error");
+      hideConfirm();
+      return;
+    }
     /* JANGAN Number(coins.toFixed(8)): holding mikro (< 1 satoshi)
        dibulatkan jadi 0 sehingga tombol 25%/50% mengisi "0" dan
        tidak terjadi apa-apa; untuk 75%/100% tampil "1e-8" (notasi
