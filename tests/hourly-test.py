@@ -2280,6 +2280,71 @@ def test_multitab_sync(pw):
     finally:
         browser.close()
 
+def test_quick_zero_feedback(pw):
+    """Regresi: tombol cepat memberi umpan balik saat tidak ada yang
+    bisa dijual/dibeli. Pernah: mode Jual tanpa holding, klik 25% /
+    Maks -> input "" tanpa pratinjau dan tanpa pesan apa pun (tombol
+    terasa mati); mode Beli saat kas Rp0, klik 25% / Maks -> input
+    "0" juga tanpa pratinjau dan tanpa pesan. Padahal klik tombol
+    Beli/Jual dengan input kosong menampilkan "Masukkan jumlah dulu."
+    — tombol cepat harus memberi tahu kenapa tidak ada yang bisa
+    dibeli/dijual."""
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        enter_guest(page)
+        def err_visible():
+            return page.evaluate(
+                "() => !document.getElementById('tradeError').hidden")
+        # 1. Jual tanpa holding: 25% dan Maks harus menampilkan pesan
+        page.click("#tabSell")
+        page.click('#quickRow [data-pct="25"]')
+        page.wait_for_timeout(300)
+        check("quick-zero: Jual 25% tanpa holding -> pesan error tampil",
+              err_visible(), page.text_content("#tradeError"))
+        check("quick-zero: pesannya menyebut belum punya BTC",
+              "belum punya BTC" in page.text_content("#tradeError"),
+              page.text_content("#tradeError"))
+        check("quick-zero: pratinjau tetap tersembunyi",
+              page.is_hidden("#previewBox"))
+        page.click('#quickRow [data-pct="100"]')
+        page.wait_for_timeout(300)
+        check("quick-zero: Jual Maks tanpa holding -> pesan error tampil",
+              err_visible(), page.text_content("#tradeError"))
+        # 2. Beli semua kas, lalu tombol cepat Beli saat kas Rp0
+        page.click("#tabBuy")
+        page.fill("#amountInput", "5000000")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(500)
+        check("quick-zero: kas habis setelah beli semua",
+              "Rp\u00a00" in cash_text(page), cash_text(page))
+        page.click('#quickRow [data-pct="25"]')
+        page.wait_for_timeout(300)
+        check("quick-zero: Beli 25% saat kas Rp0 -> pesan error tampil",
+              err_visible(), page.text_content("#tradeError"))
+        check("quick-zero: pesannya menyebut kas tersedia Rp0",
+              "kas tersedia: Rp" in page.text_content("#tradeError") and
+              "Rp\u00a00" in page.text_content("#tradeError"),
+              page.text_content("#tradeError"))
+        check("quick-zero: input dikosongkan (bukan '0')",
+              page.input_value("#amountInput") == "",
+              repr(page.input_value("#amountInput")))
+        # 3. Kontrol: tombol cepat normal tetap jalan (jual 25% dari holding)
+        page.click("#tabSell")
+        page.click('#quickRow [data-pct="25"]')
+        page.wait_for_timeout(300)
+        check("quick-zero: Jual 25% dengan holding -> pratinjau tampil",
+              not page.is_hidden("#previewBox"),
+              page.text_content("#previewBox")[:120])
+        check("quick-zero: Jual 25% dengan holding -> tanpa error",
+              page.is_hidden("#tradeError"))
+        check("0 error JS (quick-zero)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -2340,6 +2405,8 @@ def main():
                 test_welcome_no_autofocus_mobile(pw)
                 test_welcome_behind_overlay(pw)
                 test_double_enter_profile(pw)
+            if which in ("quickzero", "all"):
+                test_quick_zero_feedback(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
