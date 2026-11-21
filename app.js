@@ -1607,7 +1607,18 @@ function computeTrade() {
   if (!pricesLive) {
     return { ok: false, msg: "Harga live tidak tersedia — beli/jual spot hanya bisa saat harga live (bukan harga contoh). Tekan Refresh untuk mencoba lagi." };
   }
-  if (!isFinite(raw) || raw <= 0) return null;
+  /* Input tidak kosong tapi tidak bisa dibaca sebagai angka ("Rp" saja,
+     "abc", "1.2.3", "0"): jangan diam — pratinjau hilang tanpa pesan
+     membuat input terasa mati, dan tombol Beli/Jual malah bilang
+     "Masukkan jumlah dulu." padahal user sudah mengetik sesuatu.
+     Input kosong tetap diam (null) supaya panel yang baru dibuka
+     tidak menampilkan error. */
+  if (!isFinite(raw) || raw <= 0) {
+    if ($("amountInput").value.trim() === "") return null;
+    return { ok: false, msg: tradeMode === "buy"
+      ? "Jumlah tidak valid — contoh: Rp100.000."
+      : "Jumlah tidak valid — contoh: 0,0005 BTC." };
+  }
 
   if (tradeMode === "buy") {
     var coins = raw / price;
@@ -1753,7 +1764,13 @@ function computeFutures() {
   if (!pricesLive) {
     return { ok: false, msg: "Harga live tidak tersedia — posisi futures hanya bisa dibuka saat harga live (bukan harga contoh). Tekan Refresh untuk mencoba lagi." };
   }
-  if (!isFinite(margin) || margin <= 0) return null;
+  /* Sama seperti computeTrade: input margin tidak kosong tapi tidak
+     bisa dibaca sebagai angka ("Rp" saja, "abc") jangan diam — beri
+     tahu user. Input kosong tetap diam (null). */
+  if (!isFinite(margin) || margin <= 0) {
+    if ($("futMarginInput").value.trim() === "") return null;
+    return { ok: false, msg: "Margin tidak valid — contoh: Rp100.000." };
+  }
   if (margin > state.cash) {
     return { ok: false, msg: "Margin melebihi saldo kas. Kas tersedia: " + fmtIDR(state.cash) + "." };
   }
