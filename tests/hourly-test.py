@@ -2603,6 +2603,100 @@ def test_chart_refetch_10min(pw):
     finally:
         browser.close()
 
+def test_empty_input_stays_silent(pw):
+    """Regresi: panel trade/futures DIAM saat input masih kosong —
+    tanpa error merah dan tanpa halaman ketarik ke bawah.
+
+    Pernah: computeTrade()/computeFutures() memeriksa harga/offline
+    SEBELUM memeriksa input kosong, sehingga panel yang baru dibuka
+    (belum ada ketikan apa pun) sudah menampilkan error merah "Harga
+    belum tersedia" / "Harga live tidak tersedia" begitu halaman
+    dimuat atau saat offline — dan showFutError() menarik halaman HP
+    ke scrollY 2003 lewat scrollIntoView untuk pesan "baru" itu.
+    Perbaikan: input kosong dikembalikan null SEBELUM pemeriksaan
+    harga/offline; blokir offline + umpan balik tombol tetap berlaku
+    begitu user mengetik atau menekan tombol."""
+    siv_hook = (
+        "window.__sivCount = 0;"
+        "var _siv = Element.prototype.scrollIntoView;"
+        "Element.prototype.scrollIntoView = function() {"
+        "  window.__sivCount++; return _siv.apply(this, arguments); };")
+    # --- OFFLINE, HP: input kosong -> diam, halaman tidak loncat ---
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 390, "height": 844}, "offline", {"live": {}})
+    try:
+        page.add_init_script(siv_hook)
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent.includes('CONTOH')",
+            timeout=15000)
+        page.wait_for_timeout(1500)  # biarkan smooth scroll (bila ada) selesai
+        check("empty-silent: offline + input kosong -> tradeError tersembunyi",
+              not page.is_visible("#tradeError"),
+              page.text_content("#tradeError")[:90])
+        check("empty-silent: offline + margin kosong -> futError tersembunyi",
+              not page.is_visible("#futError"),
+              page.text_content("#futError")[:90])
+        check("empty-silent: offline + input kosong -> halaman tidak ketarik ke bawah",
+              page.evaluate("() => window.scrollY") == 0 and
+              page.evaluate("() => window.__sivCount") == 0,
+              f"scrollY={page.evaluate('() => window.scrollY')} siv={page.evaluate('() => window.__sivCount')}")
+        # Kontrol: begitu ada ketikan, blokir offline TETAP tampil.
+        page.fill("#amountInput", "1000000")
+        page.wait_for_timeout(500)
+        check("empty-silent: ketik jumlah offline -> error blokir spot tampil",
+              page.is_visible("#tradeError") and
+              "Harga live tidak tersedia" in page.text_content("#tradeError"),
+              page.text_content("#tradeError")[:90])
+        page.fill("#futMarginInput", "100000")
+        page.wait_for_timeout(500)
+        check("empty-silent: ketik margin offline -> error blokir futures tampil",
+              page.is_visible("#futError") and
+              "Harga live tidak tersedia" in page.text_content("#futError"),
+              page.text_content("#futError")[:90])
+        # Kontrol: kosongkan lagi + tekan tombol -> umpan balik tombol tetap ada.
+        page.fill("#amountInput", "")
+        page.fill("#futMarginInput", "")
+        page.wait_for_timeout(500)
+        page.click("#tradeBtn")
+        page.wait_for_timeout(400)
+        check("empty-silent: klik Beli input kosong -> 'Masukkan jumlah dulu.'",
+              page.is_visible("#tradeError") and
+              "Masukkan jumlah dulu." in page.text_content("#tradeError"),
+              page.text_content("#tradeError")[:90])
+        page.click("#futBtn")
+        page.wait_for_timeout(400)
+        check("empty-silent: klik Buka margin kosong -> 'Masukkan margin dulu.'",
+              page.is_visible("#futError") and
+              "Masukkan margin dulu" in page.text_content("#futError"),
+              page.text_content("#futError")[:90])
+        check("0 error JS (empty-silent offline)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+    # --- LIVE, HP: input kosong -> diam, halaman tidak loncat ---
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 390, "height": 844}, "live", {"live": dict(LIVE)})
+    try:
+        page.add_init_script(siv_hook)
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        page.wait_for_timeout(1200)
+        check("empty-silent: live + input kosong -> tradeError tersembunyi",
+              not page.is_visible("#tradeError"),
+              page.text_content("#tradeError")[:90])
+        check("empty-silent: live + margin kosong -> futError tersembunyi",
+              not page.is_visible("#futError"),
+              page.text_content("#futError")[:90])
+        check("empty-silent: live + input kosong -> halaman tidak ketarik ke bawah",
+              page.evaluate("() => window.scrollY") == 0 and
+              page.evaluate("() => window.__sivCount") == 0,
+              f"scrollY={page.evaluate('() => window.scrollY')} siv={page.evaluate('() => window.__sivCount')}")
+        check("0 error JS (empty-silent live)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -2671,6 +2765,8 @@ def main():
                 test_quick_dot_decimal(pw)
             if which in ("chartrefetch", "all"):
                 test_chart_refetch_10min(pw)
+            if which in ("emptyinput", "all"):
+                test_empty_input_stays_silent(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
