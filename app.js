@@ -34,6 +34,15 @@ var BINANCE_SYMBOL = {
 };
 var REFRESH_MS = 30000;
 var MAX_HISTORY = 240;
+/* Batas riwayat trade per profil (pola yang sama seperti MAX_HISTORY
+   untuk snapshot portofolio): riwayat trade TIDAK PERNAH dibatasi,
+   sehingga renderHistory() me-render SEMUA baris di tiap renderAll()
+   (tiap refresh harga 30 detik + tiap interaksi) dan localStorage
+   membengkak tanpa batas. Pernah: 600 trade → 600 baris di DOM,
+   renderAll() 98,6 ms (median) dan store 59 KB, terus membesar.
+   200 entri terakhir cukup untuk simulator (riwayat tetap hanya-baca,
+   tanpa tombol hapus — yang terbuang otomatis hanya entri tertua). */
+var MAX_TRADES = 200;
 var MAX_PROFILES = 5;
 var MAX_LEVERAGE = 100;
 /* Nomor urut fetch harga (lihat fetchPrices) — naik tiap fetch dimulai. */
@@ -119,6 +128,8 @@ function loadStore() {
         s.profiles.forEach(function (p) {
           p.holdings = p.holdings || {};
           p.trades = p.trades || [];
+          /* Pangkas riwayat lama yang tersimpan sebelum batas ini ada. */
+          if (p.trades.length > MAX_TRADES) p.trades = p.trades.slice(-MAX_TRADES);
           p.history = p.history || [];
           p.futures = p.futures || [];
           if (typeof p.cash !== "number") p.cash = INITIAL_CASH;
@@ -1601,6 +1612,17 @@ function updatePreview() {
   box.hidden = false;
 }
 
+/* Catat satu entri riwayat trade. Hanya 200 entri terakhir yang
+   disimpan (MAX_TRADES) — tanpa batas, renderHistory() me-render
+   semua baris di tiap renderAll() dan localStorage membengkak. */
+function recordTrade(tr) {
+  if (!state) return;
+  state.trades.push(tr);
+  if (state.trades.length > MAX_TRADES) {
+    state.trades = state.trades.slice(-MAX_TRADES);
+  }
+}
+
 function executeTrade(res) {
   /* Validasi ulang saat eksekusi: konfirmasi bisa dibuka lalu
      eksekusinya ditunda sementara user memakai kas di panel lain
@@ -1642,7 +1664,7 @@ function executeTrade(res) {
       : res.price;
     h.amount = newAmount;
     state.holdings[selectedSymbol] = h;
-    state.trades.push({
+    recordTrade({
       id: id, t: now, type: "buy", symbol: selectedSymbol,
       amount: res.coins, price: res.price, total: res.amount
     });
@@ -1653,7 +1675,7 @@ function executeTrade(res) {
     var hs = state.holdings[selectedSymbol];
     hs.amount -= res.coins;
     if (hs.amount <= 1e-12) delete state.holdings[selectedSymbol];
-    state.trades.push({
+    recordTrade({
       id: id, t: now, type: "sell", symbol: selectedSymbol,
       amount: res.coins, price: res.price, total: res.total
     });
@@ -1729,7 +1751,7 @@ function openFutures(res) {
     leverage: res.leverage, margin: res.margin, entry: res.entry,
     openedAt: now
   });
-  state.trades.push({
+  recordTrade({
     id: id, t: now, type: "futures-open", symbol: selectedSymbol,
     direction: futDirection, leverage: res.leverage, margin: res.margin,
     entry: res.entry, total: res.margin
@@ -1760,7 +1782,7 @@ function closeFutures(posId, reason) {
   var returned = reason === "liquidated" ? 0 : pos.margin + pnlCapped;
   state.cash += returned;
   state.futures.splice(idx, 1);
-  state.trades.push({
+  recordTrade({
     id: "f" + Date.now() + Math.floor(Math.random() * 1000),
     t: Date.now(),
     type: reason === "liquidated" ? "futures-liquidated" : "futures-close",
