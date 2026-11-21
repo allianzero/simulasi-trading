@@ -240,6 +240,39 @@ function fmtInputCoins(coins) {
   return s.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
 }
 
+/* Baca angka yang diketik user dengan FORMAT INDONESIA — aplikasi
+   ini menampilkan semua angka sebagai "Rp1.000.000" / "0,00089286"
+   (titik = pemisah ribuan, koma = desimal), jadi user wajar
+   mengetik persis seperti itu. Sebelumnya input memakai
+   type="number" + parseFloat mentah, sehingga:
+   - "1.000.000" dibaca jadi Rp1 (browser menelan titik kedua,
+     parseFloat berhenti di titik pertama) — beli Rp1.000.000
+     diam-diam jadi beli Rp1;
+   - "0,00089286" dibaca jadi 89286 koin (koma dibuang) — jual
+     selalu gagal "Koin tidak cukup" padahal angkanya sama dengan
+     yang ditampilkan;
+   - margin "100.000" dibaca jadi Rp100 — notional Rp1.000, bukan
+     Rp1.000.000.
+   Aturan: ada koma -> format Indonesia (buang titik ribuan, koma
+   jadi titik desimal). Tanpa koma, "1.000.000" / "100.000" dibaca
+   sebagai ribuan HANYA bila kelompok pertamanya bukan 0 — supaya
+   desimal mikro seperti "0.000000002" (dari tombol cepat jual)
+   tetap dibaca sebagai desimal, bukan 2 koin. Selain itu
+   parseFloat biasa ("1000000", "0.0005"). Bukan angka -> NaN. */
+function parseAmount(str) {
+  if (typeof str !== "string") return NaN;
+  var s = str.trim().replace(/\s/g, "");
+  if (!s) return NaN;
+  if (s.indexOf(",") >= 0) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (/^([1-9]\d{0,2})(\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, "");
+  }
+  if (!/^\d+(\.\d+)?$/.test(s)) return NaN;
+  var n = parseFloat(s);
+  return isFinite(n) ? n : NaN;
+}
+
 /* Angka ringkas untuk sumbu grafik, mis. Rp5,2 jt / Rp1,13 M */
 function fmtCompact(n) {
   if (!isFinite(n)) return "—";
@@ -1492,7 +1525,10 @@ function renderProfileUI() {
 /* Pratinjau hitungan dari input saat ini; mengembalikan objek
    { ok, amount, coins, total, msg } atau null bila input kosong. */
 function computeTrade() {
-  var raw = parseFloat($("amountInput").value);
+  /* parseAmount, bukan parseFloat mentah — user mengetik format
+     Indonesia ("1.000.000" / "0,00089286") seperti yang ditampilkan
+     aplikasi; parseFloat membaca "1.000.000" jadi Rp1. */
+  var raw = parseAmount($("amountInput").value);
   var price = currentPrice();
   if (!price) return { ok: false, msg: "Harga belum tersedia — tekan Refresh." };
   /* JANGAN PERNAH beli/jual spot di harga contoh offline: harga
@@ -1623,7 +1659,9 @@ function executeTrade(res) {
 /* ---------------- Trading Futures ---------------- */
 
 function computeFutures() {
-  var margin = parseFloat($("futMarginInput").value);
+  /* parseAmount, bukan parseFloat mentah — "100.000" harus dibaca
+     Rp100.000, bukan Rp100 (lihat parseAmount). */
+  var margin = parseAmount($("futMarginInput").value);
   var entry = currentPrice();
   if (!entry) return { ok: false, msg: "Harga belum tersedia — tekan Refresh." };
   /* JANGAN PERNAH buka posisi di harga contoh offline: harga contoh
