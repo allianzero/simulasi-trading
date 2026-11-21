@@ -702,7 +702,7 @@ def test_sell_max(pw):
         page.wait_for_timeout(300)
         page.click("[data-pct='100']")
         page.wait_for_timeout(300)
-        val = float(page.input_value("#amountInput"))
+        val = float(page.input_value("#amountInput").replace(",", "."))
         owned = 1000000 / 1120000000
         check("sell-max: tombol 100% mengisi jumlah koin (boleh sedikit di atas "
               "holding karena pembulatan, ditangani computeTrade)",
@@ -1474,7 +1474,7 @@ def test_micro_sell_quick(pw):
             page.wait_for_timeout(300)
             val = page.input_value("#amountInput")
             check(f"micro-sell: cepat {pct}% mengisi nilai desimal bukan nol, bukan '1e-8'",
-                  val not in ("", "0") and "e" not in val and float(val) > 0,
+                  val not in ("", "0") and "e" not in val and float(val.replace(",", ".")) > 0,
                   f"input={val!r}")
             check(f"micro-sell: cepat {pct}% menampilkan pratinjau",
                   page.is_visible("#previewBox"),
@@ -2430,6 +2430,92 @@ def test_invalid_input(pw):
     finally:
         browser.close()
 
+def test_quick_dot_decimal(pw):
+    """Regresi: tombol cepat jual tidak boleh mengisi desimal titik yang
+    parseAmount baca sebagai ribuan. Pernah: holding 1,5 XRP, klik Jual
+    75% -> fmtInputCoins mengisi "1.125" (titik desimal) -> parseAmount
+    membacanya sebagai ribuan Indonesia (1125 koin) -> pratinjau menolak
+    "Koin tidak cukup. Kamu punya 1,5 XRP." padahal koinnya cukup.
+    Harus: tombol cepat mengisi format Indonesia berkoma ("1,125")
+    sehingga pratinjau tampil dan jual 75% benar-benar tereksekusi.
+    Kontrol: 100% ("1,5") dan 25% ("0,375") tetap jalan; ketik
+    langsung "1,125" juga terbaca 1,125 koin."""
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        page.click(".market-row:has-text('XRP')")
+        page.wait_for_timeout(300)
+        # Beli Rp54.000 XRP @ Rp36.000 -> holding 1,5 XRP
+        page.fill("#amountInput", "54000")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(400)
+        check("quick-dot: beli Rp54.000 XRP, holding 1,5 koin",
+              "1,5 koin" in page.text_content("#holdingsList"),
+              page.text_content("#holdingsList").replace("\n", " ")[:120])
+        page.click("#tabSell")
+        page.wait_for_timeout(300)
+        # 75% dari 1,5 = 1,125 — titik desimal di sini = bug
+        page.click("#quickRow [data-pct='75']")
+        page.wait_for_timeout(300)
+        val = page.input_value("#amountInput")
+        check("quick-dot: cepat 75% mengisi '1,125' (koma, bukan '1.125')",
+              val == "1,125", f"input={val!r}")
+        check("quick-dot: cepat 75% menampilkan pratinjau (bukan 'Koin tidak cukup')",
+              page.is_visible("#previewBox") and page.is_hidden("#tradeError"),
+              page.text_content("#tradeError") if page.is_visible("#tradeError") else "pratinjau tampil")
+        check("quick-dot: pratinjau 75% menyebut 1,125 XRP",
+              "1,125 XRP" in page.text_content("#previewBox"),
+              page.text_content("#previewBox").replace("\n", " ")[:140])
+        # Jual 75% benar-benar tereksekusi: kas naik Rp40.500.
+        # Jangan wait_for_selector confirmBox: pada kode pra-perbaikan
+        # konfirmasi TIDAK PERNAH muncul (input "1.125" dibaca 1125)
+        # sehingga tes akan crash timeout, bukan gagal bersih.
+        page.click("#tradeBtn")
+        page.wait_for_timeout(300)
+        check("quick-dot: jual 75% membuka konfirmasi",
+              page.is_visible("#confirmBox"),
+              page.text_content("#tradeError") if page.is_visible("#tradeError") else "kotak konfirmasi tampil")
+        if page.is_visible("#confirmBox"):
+            page.click("#confirmYes")
+            page.wait_for_function(
+                "() => document.getElementById('cashBalance').textContent.includes('4.986.500')",
+                timeout=5000)
+        check("quick-dot: jual 75% tereksekusi, kas Rp4.986.500",
+              "4.986.500" in cash_text(page), cash_text(page))
+        check("quick-dot: sisa holding 0,375 XRP",
+              "0,375 koin" in page.text_content("#holdingsList"),
+              page.text_content("#holdingsList").replace("\n", " ")[:120])
+        # Kontrol: ketik langsung "1,125" dibaca 1,125 koin (bukan 1125).
+        # Sisa holding 0,375 < 1,125, jadi pakai DOGE: beli Rp8.000 DOGE
+        # @ Rp3.200 -> 2,5 DOGE, lalu ketik "1,125" harus tampil pratinjau.
+        page.click(".market-row:has-text('DOGE')")
+        page.wait_for_timeout(300)
+        page.click("#tabBuy")
+        page.wait_for_timeout(300)
+        page.fill("#amountInput", "8000")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(400)
+        page.click("#tabSell")
+        page.wait_for_timeout(300)
+        page.fill("#amountInput", "1,125")
+        page.wait_for_timeout(300)
+        check("quick-dot: ketik '1,125' pratinjau tampil (bukan 'Koin tidak cukup')",
+              page.is_visible("#previewBox") and page.is_hidden("#tradeError"),
+              page.text_content("#tradeError") if page.is_visible("#tradeError") else "pratinjau tampil")
+        check("0 error JS (quick-dot)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -2494,6 +2580,8 @@ def main():
                 test_quick_zero_feedback(pw)
             if which in ("invalidinput", "all"):
                 test_invalid_input(pw)
+            if which in ("quickdot", "all"):
+                test_quick_dot_decimal(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
