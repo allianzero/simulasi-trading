@@ -1382,7 +1382,7 @@ function renderTradePanel() {
 }
 
 function holdingsAmount(sym) {
-  var h = state.holdings[sym];
+  var h = state ? state.holdings[sym] : null;
   return h ? h.amount : 0;
 }
 
@@ -1584,6 +1584,14 @@ function renderProfileUI() {
 /* Pratinjau hitungan dari input saat ini; mengembalikan objek
    { ok, amount, coins, total, msg } atau null bila input kosong. */
 function computeTrade() {
+  /* Belum masuk Guest (state null — layar sambutan masih tampil):
+     panel trade di belakang overlay tetap bisa difokus lewat keyboard
+     (Tab), dan tanpa guard ini updatePreview/computeTrade membaca
+     state.cash -> TypeError di console tiap ketikan. Tolak dengan
+     sopan; begitu Guest masuk, state ada dan trade jalan normal. */
+  if (!state) {
+    return { ok: false, msg: "Masuk sebagai Guest dulu untuk mulai trading." };
+  }
   /* parseAmount, bukan parseFloat mentah — user mengetik format
      Indonesia ("1.000.000" / "0,00089286") seperti yang ditampilkan
      aplikasi; parseFloat membaca "1.000.000" jadi Rp1. */
@@ -1729,6 +1737,11 @@ function executeTrade(res) {
 /* ---------------- Trading Futures ---------------- */
 
 function computeFutures() {
+  /* Sama seperti computeTrade: belum masuk Guest (state null) -> tolak
+     dengan sopan, jangan baca state.cash dan melempar TypeError. */
+  if (!state) {
+    return { ok: false, msg: "Masuk sebagai Guest dulu untuk membuka posisi." };
+  }
   /* parseAmount, bukan parseFloat mentah — "100.000" harus dibaca
      Rp100.000, bukan Rp100 (lihat parseAmount). */
   var margin = parseAmount($("futMarginInput").value);
@@ -1854,6 +1867,8 @@ function disarmReset() {
 }
 
 function doReset() {
+  /* Belum masuk Guest (state null): tidak ada yang bisa direset. */
+  if (!state) return;
   var d = defaultProfileData();
   state.cash = d.cash;
   state.holdings = {};
@@ -1972,6 +1987,9 @@ $("amountInput").addEventListener("keydown", function (e) {
 $("quickRow").addEventListener("click", function (e) {
   var btn = e.target.closest("[data-pct]");
   if (!btn) return;
+  /* Belum masuk Guest (state null): tombol cepat membaca state.cash
+     -> TypeError. Sama alasannya dengan guard di computeTrade. */
+  if (!state) return;
   var pct = parseFloat(btn.getAttribute("data-pct")) / 100;
   var price = currentPrice();
   if (!price) return;
