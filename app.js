@@ -1836,6 +1836,26 @@ function doReset() {
 
 /* ---------------- Profil (Guest) ---------------- */
 
+/* Ganti/buat profil = konteks trade BARU: input jumlah + margin, error,
+   dan konfirmasi pending milik profil lama tidak boleh terbawa.
+   Pernah: ketik jual 0,0005 BTC di profil A (punya BTC) lalu buat
+   profil B — input "0.0005" terbawa dan renderAll() di B langsung
+   menampilkan error "Koin tidak cukup. Kamu punya 0 BTC." di profil
+   baru yang belum melakukan apa-apa; _pendingTrade dari A juga tetap
+   set (kotak konfirmasi tersembunyi tapi pending-nya hidup). Sama
+   alasannya dengan disarmReset() dan pengosongan input saat ganti
+   tab Beli/Jual: status panel trade milik konteks lama. */
+function clearTradeContext() {
+  window._pendingTrade = null;
+  window._pendingFut = null;
+  $("amountInput").value = "";
+  $("futMarginInput").value = "";
+  showError(null);
+  showFutError(null);
+  hideConfirm();
+  hideFutConfirm();
+}
+
 function switchProfile(id) {
   if (id === store.activeProfileId) { $("profileMenu").hidden = true; return; }
   var p = null;
@@ -1848,6 +1868,7 @@ function switchProfile(id) {
      profil lain). Pernah: arm di A, pindah ke B, satu klik Reset →
      kas B kembali Rp5.000.000 dan riwayat B hilang. */
   disarmReset();
+  clearTradeContext();
   store.activeProfileId = p.id;
   state = p;
   saveStore();
@@ -1867,6 +1888,9 @@ function createGuestProfile(name) {
   /* Sama seperti switchProfile: profil baru = konteks baru, status
      armed tombol Reset dari profil lama tidak boleh terbawa. */
   disarmReset();
+  /* Dan konteks trade-nya juga baru (lihat clearTradeContext):
+     input + error + pending milik profil lama tidak boleh terbawa. */
+  clearTradeContext();
   var p = createProfile(name);
   store.profiles.push(p);
   store.activeProfileId = p.id;
