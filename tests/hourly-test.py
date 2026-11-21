@@ -1323,6 +1323,104 @@ def test_profile_switch_clears_trade_context(pw):
     finally:
         browser.close()
 
+def test_coin_switch_clears_trade_context(pw):
+    """Regresi: ganti koin lewat baris pasar harus membersihkan konteks trade.
+    Pernah: jual 0,0005 BTC (punya BTC) lalu ketuk baris ETH — input
+    "0.0005" terbawa dan langsung muncul error menyesatkan "Koin tidak
+    cukup. Kamu punya 0 ETH." padahal user baru ganti koin; _pendingTrade
+    dan _pendingFut koin lama juga tetap set (kotak konfirmasi tersembunyi
+    tapi pending-nya hidup). Sama polanya dengan ganti profil: koin baru
+    = konteks trade baru (clearTradeContext)."""
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        if "simple/price" in route.request.url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in route.request.url:
+            mock_chart(route)
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        # Beli BTC Rp1.000.000
+        page.fill("#amountInput", "1000000")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(400)
+        check("coin-ctx: kas Rp4.000.000 setelah beli BTC",
+              "4.000.000" in cash_text(page), cash_text(page))
+        # Isi konteks trade BTC: jual 0,0005 (valid) + margin + konfirmasi terbuka
+        page.click("#tabSell")
+        page.fill("#amountInput", "0.0005")
+        page.fill("#futMarginInput", "100000")
+        page.wait_for_timeout(300)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        check("coin-ctx: konfirmasi jual BTC terbuka + pending ada",
+              page.evaluate("() => !!window._pendingTrade"))
+        # Ganti koin ke ETH lewat baris pasar
+        page.locator("#marketList .market-row", has_text="Ethereum").click()
+        page.wait_for_timeout(500)
+        check("coin-ctx: koin berganti ke ETH",
+              page.text_content("#tradeSymbol") == "ETH", page.text_content("#tradeSymbol"))
+        check("coin-ctx: input jumlah kosong di ETH",
+              page.input_value("#amountInput") == "", repr(page.input_value("#amountInput")))
+        check("coin-ctx: input margin kosong di ETH",
+              page.input_value("#futMarginInput") == "", repr(page.input_value("#futMarginInput")))
+        check("coin-ctx: TIDAK ada error 'Koin tidak cukup' di ETH",
+              page.evaluate("() => document.getElementById('tradeError').hidden"),
+              page.text_content("#tradeError"))
+        check("coin-ctx: pending trade dinolkan",
+              page.evaluate("() => window._pendingTrade === null"))
+        check("coin-ctx: kotak konfirmasi tersembunyi",
+              page.evaluate("() => document.getElementById('confirmBox').hidden"))
+        # Futures: kembali ke BTC, buka konfirmasi Long, lalu ganti ke SOL
+        page.locator("#marketList .market-row", has_text="Bitcoin").click()
+        page.wait_for_timeout(400)
+        page.fill("#futMarginInput", "100000")
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        check("coin-ctx: konfirmasi futures BTC terbuka + pending ada",
+              page.evaluate("() => !!window._pendingFut"))
+        page.locator("#marketList .market-row", has_text="Solana").click()
+        page.wait_for_timeout(500)
+        check("coin-ctx: pending futures dinolkan saat ganti ke SOL",
+              page.evaluate("() => window._pendingFut === null"))
+        check("coin-ctx: kotak konfirmasi futures tersembunyi",
+              page.evaluate("() => document.getElementById('futConfirmBox').hidden"))
+        check("coin-ctx: input margin kosong di SOL",
+              page.input_value("#futMarginInput") == "", repr(page.input_value("#futMarginInput")))
+        # Alur normal tetap jalan setelah ganti-ganti koin: beli ETH Rp500.000
+        page.click("#tabBuy")
+        page.wait_for_timeout(200)
+        page.fill("#amountInput", "500000")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function(
+            "() => document.getElementById('cashBalance').textContent.includes('3.500.000')",
+            timeout=5000)
+        check("coin-ctx: beli ETH tetap berhasil setelah ganti koin",
+              "3.500.000" in cash_text(page), cash_text(page))
+        check("0 error JS (coin-ctx)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_micro_sell_quick(pw):
     """Tombol cepat jual pada holding mikro (< 1 satoshi) tidak boleh
     mati. Pernah: beli Rp10 BTC @ Rp1.120.000.000 -> holding
@@ -1744,6 +1842,8 @@ def main():
                 test_trades_cap(pw)
             if which in ("marketfocus", "all"):
                 test_market_row_no_focus_jump(pw)
+            if which in ("coinctx", "all"):
+                test_coin_switch_clears_trade_context(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
