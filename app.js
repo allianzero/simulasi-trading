@@ -1752,6 +1752,13 @@ function switchProfile(id) {
   var p = null;
   store.profiles.forEach(function (x) { if (x.id === id) p = x; });
   if (!p) return;
+  /* Ganti profil MEMBATALKAN status armed tombol Reset: status armed
+     itu milik profil yang sedang aktif — tanpa ini, klik-1 Reset di
+     profil A lalu pindah ke profil B membuat SATU klik Reset di B
+     langsung menghapus data B (langkah konfirmasi "terpakai" di
+     profil lain). Pernah: arm di A, pindah ke B, satu klik Reset →
+     kas B kembali Rp5.000.000 dan riwayat B hilang. */
+  disarmReset();
   store.activeProfileId = p.id;
   state = p;
   saveStore();
@@ -1768,6 +1775,9 @@ function createGuestProfile(name) {
     showToast("Maksimal 5 profil tercapai.", "error");
     return null;
   }
+  /* Sama seperti switchProfile: profil baru = konteks baru, status
+     armed tombol Reset dari profil lama tidak boleh terbawa. */
+  disarmReset();
   var p = createProfile(name);
   store.profiles.push(p);
   store.activeProfileId = p.id;
