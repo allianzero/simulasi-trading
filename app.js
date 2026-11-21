@@ -2173,6 +2173,38 @@ $("guestNameInput").addEventListener("keydown", function (e) {
 
 /* ---------------- Start ---------------- */
 
+/* Sinkronisasi antar-tab: localStorage dipakai BERSAMA oleh semua tab
+   di origin yang sama, tapi tiap tab menyimpan `store`/`state` basi di
+   memori. Tanpa ini, tab yang dibuka lebih dulu lalu trade lagi akan
+   menimpa localStorage dengan salinan basinya lewat saveStore() —
+   trade yang dibuat di tab lain HILANG. Pernah: tab A beli BTC, tab B
+   jual habis (riwayat 2 trade, tanpa holding), tab A beli ETH tanpa
+   reload -> localStorage jadi [beli BTC, beli ETH] (jual B hilang) dan
+   holding BTC "bangkit" lagi. Event `storage` hanya ditembakkan di tab
+   LAIN (bukan tab yang mengubah), jadi tidak ada loop. Begitu tab lain
+   mengubah data, tab ini memuat ulang store + state, membatalkan
+   konteks trade milik state lama (pending dihitung dari holding/kas
+   lama), lalu render ulang — sebelum user sempat menekan apa pun. */
+window.addEventListener("storage", function (e) {
+  if (e.key === STORAGE_KEY) {
+    disarmReset();
+    clearTradeContext();
+    store = loadStore();
+    state = activeProfile();
+    if (state) {
+      $("welcomeOverlay").hidden = true;
+    } else if (store.profiles.length === 0) {
+      $("welcomeOverlay").hidden = false;
+    }
+    renderAll();
+  } else if (e.key === LASTLIVE_KEY) {
+    /* Harga live terakhir berubah di tab lain — pakai salinan baru
+       untuk PnL/valuasi beku, lalu render ulang. */
+    loadLastLivePrices();
+    renderAll();
+  }
+});
+
 renderAll();
 fetchPrices();
 fetchPriceChart(selectedSymbol);
