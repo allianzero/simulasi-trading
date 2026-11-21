@@ -2161,5 +2161,13 @@ fetchPriceChart(selectedSymbol);
 setInterval(fetchPrices, REFRESH_MS);
 if (store.profiles.length === 0) {
   $("welcomeOverlay").hidden = false;
-  setTimeout(function () { $("guestNameInput").focus(); }, 100);
+  /* Fokus otomatis HANYA di perangkat ber-pointer halus (mouse/
+     keyboard): di HP (touch) focus() langsung membuka keyboard
+     virtual begitu halaman pertama dibuka — menutupi kartu
+     sambutan sebelum user memilih mengetik. Sama alasannya dengan
+     larangan focus() saat ganti koin (lihat renderMarket): user HP
+     mengetuk input sendiri bila mau mengisi nama. */
+  if (window.matchMedia && window.matchMedia("(pointer: fine)").matches) {
+    setTimeout(function () { $("guestNameInput").focus(); }, 100);
+  }
 }
