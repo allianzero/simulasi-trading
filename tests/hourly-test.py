@@ -2516,6 +2516,93 @@ def test_quick_dot_decimal(pw):
     finally:
         browser.close()
 
+def test_chart_refetch_10min(pw):
+    """Regresi: grafik harga 24 jam HARUS di-fetch ulang setelah 10 menit.
+    Pernah: applyPrices hanya memanggil fetchPriceChart bila grafik belum
+    live, sehingga guard kesegaran 10 menit di fetchPriceChart tidak pernah
+    tercapai untuk grafik live — halaman yang dibiarkan terbuka berjam-jam
+    menampilkan deret yang tidak lagi 24 jam (titik live hanya ditempel di
+    ujung, lalu cap 400 titik memotong data lama). Harus: tiap refresh harga
+    mencoba fetchPriceChart (guard internal yang membatasi), dan selama
+    fetch ulang berkala grafik lama TETAP tampil (tidak berkedip blank).
+    Data mock diubah pada fetch ke-2 untuk membuktikan data baru dipakai."""
+    import time as _time
+    price_state = {"live": dict(LIVE)}
+    chart_base = {"v": 1100000000}
+    chart_hits = {"n": 0}
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        url = route.request.url
+        if "simple/price" in url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(price_state["live"]))
+        elif "market_chart" in url:
+            chart_hits["n"] += 1
+            # Fetch ulang (ke-2 dst) dibuat lambat 1,5 dtk supaya jendela
+            # loading-nya bisa diamati; datanya beda dari fetch pertama.
+            if chart_hits["n"] >= 2:
+                _time.sleep(1.5)
+            now = int(_time.time() * 1000)
+            base = chart_base["v"]
+            pts = [[now - (96 - i) * 900000, base + i * 200000] for i in range(97)]
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps({"prices": pts}))
+        else:
+            route.abort()
+
+    def bn(route):
+        route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", bn)
+    page.route("**/api.binance.com/**", bn)
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        page.wait_for_function(
+            "() => window.__priceChart && window.__priceChart.points > 10",
+            timeout=10000)
+        check("chart-refetch: market_chart di-fetch saat muat awal",
+              chart_hits["n"] >= 1, f"hits={chart_hits['n']}")
+        p96 = page.evaluate("() => window.priceHistory.BTC.points[96].v")
+        check("chart-refetch: titik ke-97 grafik awal Rp1.119.200.000",
+              abs(p96 - 1119200000) < 1, f"points[96]={p96}")
+        # Tuakan grafik jadi 11 menit lalu + ubah data mock, lalu Refresh.
+        chart_base["v"] = 1000000000
+        page.evaluate(
+            "() => { window.priceHistory.BTC.fetchedAt = Date.now() - 11*60*1000; }")
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => window.__priceChart && window.__priceChart.loading === true",
+            timeout=5000)
+        # Selama fetch ulang: grafik lama tetap tampil (tidak blank).
+        note = page.text_content("#priceChartNote")
+        pts_now = page.evaluate("() => window.__priceChart.points")
+        check("chart-refetch: selama fetch ulang, catatan bukan 'Memuat grafik…'",
+              "Memuat grafik" not in note, note)
+        check("chart-refetch: selama fetch ulang, titik lama tetap ada",
+              pts_now > 10, f"points={pts_now}")
+        page.wait_for_function(
+            "() => window.__priceChart && window.__priceChart.loading === false",
+            timeout=10000)
+        check("chart-refetch: market_chart di-fetch ulang setelah >10 menit",
+              chart_hits["n"] >= 2, f"hits={chart_hits['n']}")
+        p96_new = page.evaluate("() => window.priceHistory.BTC.points[96].v")
+        check("chart-refetch: data baru dipakai (titik ke-97 Rp1.019.200.000)",
+              abs(p96_new - 1019200000) < 1, f"points[96]={p96_new}")
+        check("0 error JS (chart-refetch)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -2582,6 +2669,8 @@ def main():
                 test_invalid_input(pw)
             if which in ("quickdot", "all"):
                 test_quick_dot_decimal(pw)
+            if which in ("chartrefetch", "all"):
+                test_chart_refetch_10min(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
