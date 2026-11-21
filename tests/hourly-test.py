@@ -1513,6 +1513,68 @@ def test_fut_error_no_repeat_scroll(pw):
     finally:
         browser2.close()
 
+def test_trades_cap(pw):
+    """Regresi: riwayat trade dibatasi 200 entri terakhir (MAX_TRADES).
+    Pernah: state.trades tak terbatas — 600 trade -> 600 baris di DOM,
+    renderAll() 98,6 ms (median) di tiap refresh 30 detik, store 59 KB
+    dan terus membesar tanpa batas."""
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        enter_guest(page)
+        page.wait_for_function("() => document.getElementById('priceBadgeText').textContent.includes('HARGA LIVE')", timeout=10000)
+        # Seed 250 trade (melebihi batas 200) dengan total khas per entri.
+        page.evaluate("""(n) => {
+          var s = JSON.parse(localStorage.getItem('simulasi-trading-v2'));
+          var p = s.profiles[0];
+          var now = Date.now();
+          p.trades = [];
+          for (var i = 0; i < n; i++) {
+            p.trades.push({type: 'buy', symbol: 'BTC', amount: 0.001,
+              price: 1120000000, total: 1000 + i, t: now - (n - i) * 60000});
+          }
+          localStorage.setItem('simulasi-trading-v2', JSON.stringify(s));
+        }""", 250)
+        page.reload()
+        page.wait_for_function("() => !document.getElementById('profileWrap').hidden", timeout=5000)
+        page.wait_for_selector(".history-row", timeout=10000)
+        def stored_trades():
+            return page.evaluate("""() => {
+              var s = JSON.parse(localStorage.getItem('simulasi-trading-v2') || 'null');
+              var p = s.profiles.find(x => x.id === s.activeProfileId);
+              return p ? p.trades : null;
+            }""")
+        check("trades-cap: hanya 200 baris riwayat di-render dari 250 seed",
+              page.locator(".history-row").count() == 200,
+              str(page.locator(".history-row").count()))
+        st = stored_trades()
+        check("trades-cap: riwayat tersimpan dipangkas jadi 200 entri",
+              st and len(st) == 200, str(len(st) if st else None))
+        check("trades-cap: entri tertua yang tersisa adalah seed ke-51 (total 1050), seed awal terbuang",
+              st and st[0]["total"] == 1050 and st[-1]["total"] == 1249,
+              "oldest=%s newest=%s" % (st[0]["total"] if st else None, st[-1]["total"] if st else None))
+        # Satu trade sungguhan: jumlah baris + entri tersimpan TETAP 200,
+        # baris teratas adalah BELI yang baru.
+        page.click("#tabBuy")
+        page.fill("#amountInput", "10000")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(800)
+        check("trades-cap: setelah trade baru, baris riwayat tetap 200",
+              page.locator(".history-row").count() == 200,
+              str(page.locator(".history-row").count()))
+        st2 = stored_trades()
+        check("trades-cap: setelah trade baru, entri tersimpan tetap 200",
+              st2 and len(st2) == 200, str(len(st2) if st2 else None))
+        check("trades-cap: baris teratas adalah BELI baru Rp10.000",
+              "BELI BTC" in page.locator(".history-row").first.inner_text() and
+              "10.000" in page.locator(".history-row").first.inner_text(),
+              page.locator(".history-row").first.inner_text()[:80])
+        check("0 error JS (trades-cap)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -1555,6 +1617,8 @@ def main():
                 test_panel_mark_offline(pw)
             if which in ("futerr", "all"):
                 test_fut_error_no_repeat_scroll(pw)
+            if which in ("tradescap", "all"):
+                test_trades_cap(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
