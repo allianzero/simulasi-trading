@@ -242,13 +242,18 @@ function fmtCoin(n) {
    BTC) jadi 0 sehingga tombol cepat 25%/50% mengisi "0" dan tidak
    terjadi apa-apa; Number(...) juga menampilkan "1e-8" (notasi
    ilmiah) untuk 75%/100%. Nilai yang dikembalikan tidak pernah 0
-   bila koinnya > 0, dan tidak pernah notasi ilmiah. */
+   bila koinnya > 0, dan tidak pernah notasi ilmiah.
+   Format desimal memakai KOMA ("1,125"), bukan titik — persis
+   seperti tampilan holding aplikasi. Titik desimal ("1.125") dibaca
+   parseAmount sebagai ribuan Indonesia (1125 koin) sehingga tombol
+   cepat 75% dari holding 1,5 koin mengisi "1.125" lalu pratinjau
+   menolak "Koin tidak cukup" padahal koinnya cukup. */
 function fmtInputCoins(coins) {
   if (!(coins > 0) || !isFinite(coins)) return "";
   var dec = 8;
   var s = coins.toFixed(dec);
   while (Number(s) === 0 && dec < 18) { dec++; s = coins.toFixed(dec); }
-  return s.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  return s.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "").replace(".", ",");
 }
 
 /* Baca angka yang diketik user dengan FORMAT INDONESIA — aplikasi
