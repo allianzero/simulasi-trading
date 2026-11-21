@@ -2114,6 +2114,123 @@ def test_pending_cleared_on_hide(pw):
     finally:
         browser.close()
 
+def route_page(page, scenario, price_state):
+    """Daftarkan mock harga yang sama seperti new_page(), untuk halaman
+    TAMBAHAN dalam context yang sama. page.route() berlaku per-halaman,
+    bukan per-context — tanpa ini tab kedua tidak mendapat mock dan
+    jatuh ke harga contoh (fetch asli diblokir tunnel VM)."""
+    import urllib.parse
+
+    def cg_handler(route):
+        if scenario in ("offline", "binance"):
+            route.abort()
+        else:
+            url = route.request.url
+            if "simple/price" in url:
+                route.fulfill(status=200, content_type="application/json",
+                              body=json.dumps(price_state["live"]))
+            elif "market_chart" in url:
+                mock_chart(route)
+            else:
+                route.abort()
+
+    def bin_handler(route):
+        if scenario == "offline":
+            route.abort()
+        elif scenario == "binance":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(route.request.url).query)
+            syms = json.loads(q.get("symbols", ["[]"])[0])
+            out = [{"symbol": s, "lastPrice": str(BINANCE_USDT[s]),
+                    "priceChangePercent": str(BINANCE_CHG[s])} for s in syms]
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(out))
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg_handler)
+    page.route("**/data-api.binance.vision/**", bin_handler)
+    page.route("**/api.binance.com/**", bin_handler)
+
+def test_multitab_sync(pw):
+    """Regresi: dua tab berbagi localStorage — tab yang trade di tab lain
+    tidak boleh ditimpa oleh tab basi. Pernah: tab A beli BTC, tab B jual
+    habis, tab A beli ETH tanpa reload -> localStorage jadi [beli BTC,
+    beli ETH] (jual B hilang) dan holding BTC "bangkit" lagi, karena tab
+    A menyimpan salinan state basi lewat saveStore(). Perbaikan: event
+    `storage` memuat ulang store + state di tab lain begitu data berubah."""
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, pageA, errorsA = new_page(pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        enter_guest(pageA)
+        pageA.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        # Tab A: beli BTC Rp1.000.000
+        pageA.fill("#amountInput", "1000000")
+        pageA.click("#tradeBtn")
+        pageA.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        pageA.click("#confirmYes")
+        pageA.wait_for_function("() => document.getElementById('confirmBox').hidden", timeout=5000)
+        check("multitab: tab A beli BTC, kas Rp4.000.000",
+              "4.000.000" in cash_text(pageA), cash_text(pageA))
+        # Tab B: tab baru di CONTEXT yang sama (localStorage bersama)
+        pageB = ctx.new_page()
+        errorsB = []
+        pageB.on("pageerror", lambda e: errorsB.append(str(e)))
+        pageB.on("console", lambda m: errorsB.append("console." + m.type + ": " + m.text)
+                 if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+        route_page(pageB, "live", price_state)
+        pageB.goto(BASE)
+        pageB.wait_for_function("() => !document.getElementById('profileWrap').hidden", timeout=10000)
+        pageB.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        check("multitab: tab B (load baru) melihat holding BTC dari A",
+              "BTC" in (pageB.text_content("#holdingsList") or ""),
+              pageB.text_content("#holdingsList"))
+        # Tab B: jual semua BTC
+        pageB.click("#tabSell")
+        pageB.fill("#amountInput", "0,00089286")
+        pageB.click("#tradeBtn")
+        pageB.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        pageB.click("#confirmYes")
+        pageB.wait_for_function("() => document.getElementById('confirmBox').hidden", timeout=5000)
+        check("multitab: tab B jual habis, kas kembali Rp5.000.000",
+              "5.000.000" in cash_text(pageB), cash_text(pageB))
+        # Tab A harus ikut sinkron OTOMATIS (event storage) tanpa reload
+        pageA.bring_to_front()
+        pageA.wait_for_function(
+            "() => document.getElementById('cashBalance').textContent.includes('5.000.000')",
+            timeout=5000)
+        check("multitab: tab A ikut sinkron — kas jadi Rp5.000.000 tanpa reload",
+              "5.000.000" in cash_text(pageA), cash_text(pageA))
+        check("multitab: tab A ikut sinkron — holding BTC hilang",
+              "BTC" not in (pageA.text_content("#holdingsList") or ""),
+              pageA.text_content("#holdingsList"))
+        # Tab A: beli ETH Rp500.000 — jual B tidak boleh hilang
+        pageA.evaluate("() => { document.querySelectorAll('.market-row')[1].click(); }")
+        pageA.wait_for_function(
+            "() => document.getElementById('tradeSymbol').textContent === 'ETH'", timeout=5000)
+        pageA.fill("#amountInput", "500000")
+        pageA.click("#tradeBtn")
+        pageA.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        pageA.click("#confirmYes")
+        pageA.wait_for_function("() => document.getElementById('confirmBox').hidden", timeout=5000)
+        store = pageA.evaluate("() => JSON.parse(localStorage.getItem('simulasi-trading-v2'))")
+        prof = store["profiles"][0]
+        kinds = [(t.get("type"), t.get("symbol")) for t in prof["trades"]]
+        check("multitab: setelah trade A, jual B tetap tercatat (3 trade)",
+              len(prof["trades"]) == 3 and ("sell", "BTC") in kinds, str(kinds))
+        check("multitab: setelah trade A, holding BTC tetap tidak ada",
+              "BTC" not in prof.get("holdings", {}), str(prof.get("holdings")))
+        check("multitab: setelah trade A, holding ETH ada",
+              "ETH" in prof.get("holdings", {}), str(prof.get("holdings")))
+        check("0 error JS (multitab, tab A)", len(errorsA) == 0, "; ".join(errorsA[:3]))
+        check("0 error JS (multitab, tab B)", len(errorsB) == 0, "; ".join(errorsB[:3]))
+        pageB.close()
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -2168,6 +2285,8 @@ def main():
                 test_coin_switch_clears_trade_context(pw)
             if which in ("pendinghide", "all"):
                 test_pending_cleared_on_hide(pw)
+            if which in ("multitab", "all"):
+                test_multitab_sync(pw)
             if which in ("welcomefocus", "all"):
                 test_welcome_no_autofocus_mobile(pw)
                 test_welcome_behind_overlay(pw)
