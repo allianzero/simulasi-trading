@@ -1709,11 +1709,21 @@ function createGuestProfile(name) {
 
 /* ---------------- Event wiring ---------------- */
 
+/* Ganti mode Beli/Jual: satuan input BERUBAH (Rupiah <-> koin), jadi
+   angka lama harus dibersihkan. Pernah: ketik Rp1.000.000 di mode Beli,
+   lalu ketuk tab Jual — input tetap "1000000" tapi kini dibaca sebagai
+   1.000.000 BTC sehingga muncul error menyesatkan "Koin tidak cukup.
+   Kamu punya 0 BTC." (dan sebaliknya: 0,0005 BTC di mode Jual dibaca
+   sebagai Rp0,0005 di mode Beli). */
 $("tabBuy").addEventListener("click", function () {
-  tradeMode = "buy"; hideConfirm(); renderTradePanel();
+  tradeMode = "buy"; hideConfirm();
+  $("amountInput").value = "";
+  renderTradePanel();
 });
 $("tabSell").addEventListener("click", function () {
-  tradeMode = "sell"; hideConfirm(); renderTradePanel();
+  tradeMode = "sell"; hideConfirm();
+  $("amountInput").value = "";
+  renderTradePanel();
 });
 $("amountInput").addEventListener("input", function () {
   hideConfirm(); updatePreview();
