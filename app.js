@@ -1188,8 +1188,15 @@ function renderMarket() {
       "</span>";
     row.addEventListener("click", function () {
       selectedSymbol = a.symbol;
-      hideConfirm();
-      hideFutConfirm();
+      /* Ganti koin = konteks trade BARU (lihat clearTradeContext):
+         konfirmasi pending, input jumlah/margin, dan error milik koin
+         lama tidak boleh terbawa. Pernah: jual 0,0005 BTC lalu ketuk
+         baris ETH — input "0.0005" terbawa dan langsung muncul error
+         menyesatkan "Koin tidak cukup. Kamu punya 0 ETH.", padahal
+         user baru ganti koin; _pendingTrade/_pendingFut koin lama
+         juga tetap set (kotak tersembunyi tapi pending-nya hidup).
+         Sama polanya dengan ganti profil dan ganti tab Beli/Jual. */
+      clearTradeContext();
       renderAll();
       fetchPriceChart(selectedSymbol);
       /* JANGAN focus() ke input jumlah di sini: di HP (390px) panel
@@ -1849,7 +1856,9 @@ function doReset() {
    baru yang belum melakukan apa-apa; _pendingTrade dari A juga tetap
    set (kotak konfirmasi tersembunyi tapi pending-nya hidup). Sama
    alasannya dengan disarmReset() dan pengosongan input saat ganti
-   tab Beli/Jual: status panel trade milik konteks lama. */
+   tab Beli/Jual: status panel trade milik konteks lama.
+   Dipakai juga saat ganti koin lewat baris pasar — koin baru =
+   konteks baru dengan alasan yang sama. */
 function clearTradeContext() {
   window._pendingTrade = null;
   window._pendingFut = null;
