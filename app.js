@@ -2145,6 +2145,11 @@ document.addEventListener("click", function (e) {
   }
 });
 $("createProfileBtn").addEventListener("click", function () {
+  /* Abaikan aktivasi kedua: Enter kedua di input nama masih sampai
+     ke input (fokus tidak pindah saat menu menutup) sehingga tanpa
+     guard ini satu Enter ganda membuat DUA profil. Pernah: double-
+     Enter di Buat Profil -> 3 profil padahal maksudnya 2. */
+  if ($("profileMenu").hidden) return;
   var name = $("newProfileName").value;
   var p = createGuestProfile(name);
   if (!p) return;
@@ -2160,6 +2165,11 @@ $("newProfileName").addEventListener("keydown", function (e) {
 });
 
 $("guestEnterBtn").addEventListener("click", function () {
+  /* Abaikan aktivasi kedua: Enter kedua di input nama masih sampai
+     ke input (fokus tidak pindah saat overlay tersembunyi) sehingga
+     tanpa guard ini satu Enter ganda membuat DUA profil Guest.
+     Pernah: double-Enter di layar sambutan -> profil=2. */
+  if ($("welcomeOverlay").hidden) return;
   var name = $("guestNameInput").value;
   var p = createGuestProfile(name);
   if (!p) return;
