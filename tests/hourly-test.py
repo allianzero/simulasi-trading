@@ -1144,6 +1144,99 @@ def test_panel_mark_offline(pw):
     finally:
         browser.close()
 
+def test_reset_armed_profile_switch(pw):
+    """Status armed tombol Reset (dua langkah) tidak boleh bocor saat
+    ganti profil. Pernah: klik-1 Reset di profil A (armed), pindah
+    ke profil B, SATU klik Reset di B langsung menghapus data B —
+    langkah konfirmasi "terpakai" di profil lain. Harus: ganti profil
+    membatalkan armed; Reset di B butuh dua klik sendiri di B."""
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        if "simple/price" in route.request.url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in route.request.url:
+            mock_chart(route)
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        # Profil A: beli Rp500.000 supaya ada data
+        page.fill("#amountInput", "500000")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(400)
+        check("reset-armed: profil A kas Rp4.500.000 setelah beli",
+              "4.500.000" in cash_text(page), cash_text(page))
+        # Buat profil B + beli di B supaya efek reset terlihat
+        page.click("#profileBtn")
+        page.fill("#newProfileName", "ProfilB")
+        page.click("#createProfileBtn")
+        page.wait_for_timeout(300)
+        check("reset-armed: pindah ke profil B",
+              page.text_content("#profileName") == "ProfilB", page.text_content("#profileName"))
+        page.fill("#amountInput", "500000")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(400)
+        check("reset-armed: profil B kas Rp4.500.000 + ada riwayat BELI",
+              "4.500.000" in cash_text(page) and "BELI BTC" in page.text_content("#tradeHistory"),
+              cash_text(page))
+        # Kembali ke A, arm Reset di A
+        page.click("#profileBtn")
+        page.wait_for_timeout(200)
+        page.locator("#profileList .profile-item").first.click()
+        page.wait_for_timeout(300)
+        page.click("#resetBtn")
+        check("reset-armed: klik-1 di A membuat tombol armed",
+              page.text_content("#resetBtn") == "Klik lagi untuk konfirmasi",
+              page.text_content("#resetBtn"))
+        # SEGERA pindah ke B (dalam 4 detik timer armed) — armed harus batal
+        page.click("#profileBtn")
+        page.wait_for_timeout(200)
+        page.locator("#profileList .profile-item").nth(1).click()
+        page.wait_for_timeout(300)
+        check("reset-armed: ganti profil membatalkan armed",
+              page.text_content("#resetBtn") == "Reset Simulasi",
+              page.text_content("#resetBtn"))
+        # SATU klik Reset di B tidak boleh menghapus B
+        page.click("#resetBtn")
+        page.wait_for_timeout(400)
+        check("reset-armed: satu klik Reset di B TIDAK menghapus B",
+              "4.500.000" in cash_text(page) and "BELI BTC" in page.text_content("#tradeHistory"),
+              cash_text(page) + " | " + page.text_content("#tradeHistory")[:60])
+        check("reset-armed: satu klik itu justru meng-arm-kan Reset di B",
+              page.text_content("#resetBtn") == "Klik lagi untuk konfirmasi",
+              page.text_content("#resetBtn"))
+        # Klik ke-2 di B (profil yang sama) baru mereset B
+        page.click("#resetBtn")
+        page.wait_for_timeout(400)
+        check("reset-armed: dua klik di profil yang sama mereset B",
+              "5.000.000" in cash_text(page) and
+              "Belum ada transaksi" in page.text_content("#tradeHistory"),
+              cash_text(page))
+        check("0 error JS (reset-armed)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -1156,6 +1249,8 @@ def main():
                 test_tab_switch_clears_input(pw)
                 test_profile_name_escaped(pw)
                 test_overlapping_confirms(pw)
+            if which in ("resetarmed", "all"):
+                test_reset_armed_profile_switch(pw)
             if which in ("offline", "all"):
                 test_offline(pw)
                 test_spot_offline_blocked(pw)
