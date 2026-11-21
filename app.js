@@ -1403,13 +1403,24 @@ function renderFuturesPanel() {
 function showFutError(msg) {
   var el = $("futError");
   if (msg) {
+    /* Guncang + gulir HANYA bila pesannya BARU (belum tampil).
+       Tanpa ini, updateFutPreview() yang dipanggil tiap renderAll
+       (refresh harga tiap 30 detik) dan tiap ketik di input margin
+       mengulang shake + scrollIntoView untuk pesan yang SAMA
+       sehingga halaman HP ketarik ke bawah tiap 30 detik walau user
+       sedang membaca bagian lain (pernah: scrollY 0 -> 2004 oleh
+       satu renderAll saat offline). Pesan yang sudah tampil cukup
+       dipertahankan tanpa guncangan/scroll ulang. */
+    var isNew = el.hidden || el.textContent !== msg;
     el.textContent = msg; el.hidden = false;
-    /* Guncang + gulir ke pesan agar di HP jelas terlihat bahwa
-       tombol ditekan tapi ada yang kurang (bukan tombol mati). */
-    el.classList.remove("shake");
-    void el.offsetWidth;
-    el.classList.add("shake");
-    el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (isNew) {
+      /* Guncang + gulir ke pesan agar di HP jelas terlihat bahwa
+         tombol ditekan tapi ada yang kurang (bukan tombol mati). */
+      el.classList.remove("shake");
+      void el.offsetWidth;
+      el.classList.add("shake");
+      el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
   } else { el.hidden = true; }
 }
 
