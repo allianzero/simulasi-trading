@@ -2034,6 +2034,55 @@ def test_welcome_behind_overlay(pw):
     finally:
         browser.close()
 
+def test_double_enter_profile(pw):
+    """Regresi: Enter ganda di input nama TIDAK membuat 2 profil.
+
+    Pernah: Enter kedua masih sampai ke input (fokus tidak pindah
+    saat overlay/menu menutup) sehingga satu Enter ganda di layar
+    sambutan membuat 2 profil Guest, dan Enter ganda di Buat Profil
+    membuat profil ketiga. Perbaikan: handler guestEnterBtn abaikan
+    klik bila overlay sudah tersembunyi; handler createProfileBtn
+    abaikan klik bila menu sudah tertutup.
+    """
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        page.goto(BASE)
+        page.wait_for_selector("#welcomeOverlay:not([hidden])", timeout=10000)
+        page.fill("#guestNameInput", "Bray")
+        page.keyboard.press("Enter")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(400)
+        n = page.evaluate("JSON.parse(localStorage.getItem('simulasi-trading-v2')||'{}').profiles.length")
+        check("double-enter: Enter ganda Guest -> 1 profil", n == 1, f"profil={n}")
+        check("double-enter: overlay tersembunyi setelah masuk",
+              page.evaluate("document.getElementById('welcomeOverlay').hidden"))
+        page.click("#profileBtn")
+        page.wait_for_selector("#newProfileName", timeout=5000)
+        page.fill("#newProfileName", "Kedua")
+        page.keyboard.press("Enter")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(400)
+        n = page.evaluate("JSON.parse(localStorage.getItem('simulasi-trading-v2')||'{}').profiles.length")
+        check("double-enter: Enter ganda Buat Profil -> total 2 profil", n == 2, f"profil={n}")
+        check("double-enter: kas profil aktif tetap Rp5.000.000",
+              "5.000.000" in cash_text(page), cash_text(page))
+        check("0 error JS (double-enter)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+    # Double-click tombol Masuk Guest (konteks baru = localStorage kosong)
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        page.goto(BASE)
+        page.wait_for_selector("#welcomeOverlay:not([hidden])", timeout=10000)
+        page.fill("#guestNameInput", "Bray2")
+        page.click("#guestEnterBtn", click_count=2)
+        page.wait_for_timeout(400)
+        n = page.evaluate("JSON.parse(localStorage.getItem('simulasi-trading-v2')||'{}').profiles.length")
+        check("double-enter: klik ganda Masuk Guest -> 1 profil", n == 1, f"profil={n}")
+        check("0 error JS (double-enter, klik ganda)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_pending_cleared_on_hide(pw):
     """Regresi: menutup kotak konfirmasi MEMBATALKAN pending-nya.
     Pernah: konfirmasi beli dibuka lalu ganti tab Beli/Jual, ketik
@@ -2290,6 +2339,7 @@ def main():
             if which in ("welcomefocus", "all"):
                 test_welcome_no_autofocus_mobile(pw)
                 test_welcome_behind_overlay(pw)
+                test_double_enter_profile(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
