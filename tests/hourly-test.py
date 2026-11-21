@@ -1981,6 +1981,59 @@ def test_welcome_no_autofocus_mobile(pw):
     finally:
         browser.close()
 
+def test_welcome_behind_overlay(pw):
+    """Regresi: interaksi panel trade SEBELUM masuk Guest tidak crash.
+
+    Pernah: layar sambutan menutupi halaman tapi elemen di belakangnya
+    tetap bisa difokus lewat keyboard (Tab) — ketik jumlah spot /
+    margin, klik Beli / Buka Long / chip cepat / Reset 2x semuanya
+    membaca state.cash saat state masih null -> TypeError
+    "Cannot read properties of null (reading 'cash')" di console
+    tiap ketikan. Perbaikan: computeTrade/computeFutures menolak
+    dengan sopan bila !state, holdingsAmount/doReset/quickRow dijaga.
+    """
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        page.goto(BASE)
+        page.wait_for_selector("#welcomeOverlay:not([hidden])", timeout=10000)
+        page.wait_for_function("() => document.getElementById('priceBadgeText').textContent.includes('HARGA LIVE')", timeout=15000)
+        check("welcome-behind: overlay tampil + harga LIVE (state null)",
+              page.evaluate("!document.getElementById('welcomeOverlay').hidden"))
+        page.focus("#amountInput")
+        page.keyboard.type("1000000", delay=10)
+        page.wait_for_timeout(400)
+        check("welcome-behind: ketik Rp1.000.000 di input spot tanpa error JS",
+              len(errors) == 0, "; ".join(errors[:2]))
+        check("welcome-behind: pesan 'Masuk sebagai Guest' tampil, bukan crash",
+              page.evaluate("!document.getElementById('tradeError').hidden") and
+              "Guest" in page.text_content("#tradeError"),
+              page.text_content("#tradeError"))
+        page.evaluate("() => document.getElementById('tradeBtn').click()")
+        page.wait_for_timeout(300)
+        check("welcome-behind: klik Beli tanpa error JS", len(errors) == 0, "; ".join(errors[:2]))
+        page.evaluate("() => document.querySelector('#quickRow [data-pct=\"25\"]').click()")
+        page.wait_for_timeout(300)
+        check("welcome-behind: klik chip 25% tanpa error JS", len(errors) == 0, "; ".join(errors[:2]))
+        page.focus("#futMarginInput")
+        page.keyboard.type("100000", delay=10)
+        page.wait_for_timeout(400)
+        check("welcome-behind: ketik margin tanpa error JS", len(errors) == 0, "; ".join(errors[:2]))
+        page.evaluate("() => document.getElementById('futBtn').click()")
+        page.wait_for_timeout(300)
+        check("welcome-behind: klik Buka Long tanpa error JS", len(errors) == 0, "; ".join(errors[:2]))
+        page.evaluate("() => document.getElementById('resetBtn').click()")
+        page.wait_for_timeout(200)
+        page.evaluate("() => document.getElementById('resetBtn').click()")
+        page.wait_for_timeout(300)
+        check("welcome-behind: klik Reset 2x tanpa error JS", len(errors) == 0, "; ".join(errors[:2]))
+        page.click("#guestEnterBtn")
+        page.wait_for_function("() => document.getElementById('welcomeOverlay').hidden", timeout=5000)
+        check("welcome-behind: masuk Guest tetap jalan, kas Rp5.000.000",
+              "5.000.000" in cash_text(page), cash_text(page))
+        check("0 error JS (welcome-behind)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_pending_cleared_on_hide(pw):
     """Regresi: menutup kotak konfirmasi MEMBATALKAN pending-nya.
     Pernah: konfirmasi beli dibuka lalu ganti tab Beli/Jual, ketik
@@ -2117,6 +2170,7 @@ def main():
                 test_pending_cleared_on_hide(pw)
             if which in ("welcomefocus", "all"):
                 test_welcome_no_autofocus_mobile(pw)
+                test_welcome_behind_overlay(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
