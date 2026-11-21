@@ -1679,6 +1679,79 @@ def test_id_rp_prefix(pw):
     finally:
         browser.close()
 
+def test_enter_key(pw):
+    """Enter di input jumlah spot / margin futures harus memicu tombol
+    aksinya (Beli/Jual / Buka Long/Short). Pernah: ketik jumlah lalu
+    tekan Enter tidak terjadi apa-apa — tidak ada keydown handler,
+    berbeda dengan input nama profil yang sudah merespons Enter.
+    Harus: Enter di #amountInput membuka konfirmasi beli; Enter di
+    #futMarginInput membuka konfirmasi futures; Enter dengan input
+    kosong menampilkan pesan "Masukkan ... dulu." (bukan diam)."""
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        if "simple/price" in route.request.url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in route.request.url:
+            mock_chart(route)
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        # Enter di input spot (jumlah valid) -> konfirmasi beli terbuka
+        page.fill("#amountInput", "1000000")
+        page.wait_for_timeout(300)
+        check("enter-key: pratinjau beli tampil sebelum Enter",
+              page.is_visible("#previewBox"))
+        page.press("#amountInput", "Enter")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        check("enter-key: Enter di input spot membuka konfirmasi beli",
+              page.is_visible("#confirmBox"))
+        page.click("#confirmYes")
+        page.wait_for_function("() => document.getElementById('cashBalance').textContent.includes('4.000.000')", timeout=5000)
+        check("enter-key: beli via Enter tereksekusi, kas Rp4.000.000",
+              "4.000.000" in cash_text(page), cash_text(page))
+        # Enter di input margin futures -> konfirmasi futures terbuka
+        page.fill("#futMarginInput", "100000")
+        page.wait_for_timeout(300)
+        check("enter-key: pratinjau futures tampil sebelum Enter",
+              page.is_visible("#futPreview"))
+        page.press("#futMarginInput", "Enter")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        check("enter-key: Enter di input margin membuka konfirmasi futures",
+              page.is_visible("#futConfirmBox"))
+        page.click("#futConfirmNo")
+        # Enter dengan input kosong -> pesan, bukan diam
+        page.fill("#amountInput", "")
+        page.press("#amountInput", "Enter")
+        page.wait_for_timeout(300)
+        check("enter-key: Enter input spot kosong menampilkan 'Masukkan jumlah dulu.'",
+              page.is_visible("#tradeError") and "Masukkan jumlah dulu." in page.text_content("#tradeError"),
+              page.text_content("#tradeError") if page.is_visible("#tradeError") else "error sembunyi")
+        page.fill("#futMarginInput", "")
+        page.press("#futMarginInput", "Enter")
+        page.wait_for_timeout(300)
+        check("enter-key: Enter input margin kosong menampilkan 'Masukkan margin dulu.'",
+              page.is_visible("#futError") and "Masukkan margin dulu" in page.text_content("#futError"),
+              page.text_content("#futError") if page.is_visible("#futError") else "error sembunyi")
+        check("0 error JS (enter-key)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_fut_error_no_repeat_scroll(pw):
     """Error futures yang sama tidak boleh mengguncang + scroll ulang.
 
@@ -1959,6 +2032,7 @@ def main():
                 test_overlapping_confirms(pw)
                 test_id_number_format(pw)
                 test_id_rp_prefix(pw)
+                test_enter_key(pw)
             if which in ("resetarmed", "all"):
                 test_reset_armed_profile_switch(pw)
             if which in ("profilectx", "all"):
