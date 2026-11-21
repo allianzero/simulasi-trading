@@ -1192,7 +1192,12 @@ function renderMarket() {
       hideFutConfirm();
       renderAll();
       fetchPriceChart(selectedSymbol);
-      $("amountInput").focus();
+      /* JANGAN focus() ke input jumlah di sini: di HP (390px) panel
+         Spot ada jauh di bawah daftar pasar, sehingga focus()
+         menarik halaman dari scrollY 0 -> ~1414 dan membuka
+         keyboard — user yang cuma mau ganti koin tiba-tiba
+         "dilempar" ke panel trade. Ganti koin cukup mengganti
+         koinnya; user mengetuk input sendiri bila mau mengetik. */
     });
     list.appendChild(row);
   });
