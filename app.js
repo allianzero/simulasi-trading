@@ -1425,11 +1425,24 @@ function renderProfileUI() {
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "profile-item" + (p.id === store.activeProfileId ? " active" : "");
-    btn.innerHTML =
-      '<span class="profile-avatar" style="width:26px;height:26px;font-size:0.8rem">' +
-        (p.name || "G").charAt(0).toUpperCase() + "</span>" +
-      "<span>" + p.name + "</span>" +
-      (p.id === store.activeProfileId ? '<span class="check">&#10003;</span>' : "");
+    /* Nama profil JANGAN pernah lewat innerHTML: nama diketik user dan
+       bisa berisi markup ("<b>TEST</b>" pernah tampil tebal di menu,
+       "<img src=x>" pernah jadi elemen <img> sungguhan). Bangun DOM
+       dengan textContent supaya nama selalu tampil sebagai teks biasa. */
+    var av = document.createElement("span");
+    av.className = "profile-avatar";
+    av.style.cssText = "width:26px;height:26px;font-size:0.8rem";
+    av.textContent = (p.name || "G").charAt(0).toUpperCase();
+    btn.appendChild(av);
+    var nm = document.createElement("span");
+    nm.textContent = p.name;
+    btn.appendChild(nm);
+    if (p.id === store.activeProfileId) {
+      var chk = document.createElement("span");
+      chk.className = "check";
+      chk.textContent = "\u2713";
+      btn.appendChild(chk);
+    }
     btn.addEventListener("click", function () { switchProfile(p.id); });
     list.appendChild(btn);
   });
