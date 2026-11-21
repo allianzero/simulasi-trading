@@ -372,12 +372,16 @@ function applyPrices(data, live) {
   updatePriceBadge();
   checkLiquidations();
   appendPricePoint();
-  /* Grafik koin terpilih belum live (misal market_chart sempat
-     kena rate limit) — coba lagi tiap refresh harga; guard di
-     fetchPriceChart membatasi percobaan ke 1× per 60 detik. */
-  if (!priceHistory[selectedSymbol] || !priceHistory[selectedSymbol].live) {
-    fetchPriceChart(selectedSymbol);
-  }
+  /* Grafik koin terpilih DICOBA LAGI tiap refresh harga — termasuk
+     bila grafiknya sudah live: guard kesegaran di fetchPriceChart
+     (live 10 menit, cadangan 60 detik) yang memutuskan perlu
+     fetch ulang atau tidak. Tanpa ini grafik 24 jam TIDAK PERNAH
+     di-fetch ulang selama halaman dibiarkan terbuka (dulu hanya
+     dipanggil bila grafik belum live): deretnya tidak bergeser,
+     titik live hanya ditempel di ujung, dan begitu cap 400 titik
+     tercapai grafik tinggal ~3 jam terakhir padahal labelnya
+     tetap "24 jam terakhir". */
+  fetchPriceChart(selectedSymbol);
   snapshotPortfolio();
   renderAll();
 }
@@ -999,7 +1003,11 @@ function drawPriceChart() {
     lines: lines.map(function (l) { return { type: l.type, price: l.price }; })
   };
 
-  if (!h || h.loading) {
+  /* Saat memuat ulang (fetch berkala tiap 10 menit) grafik lama
+     TETAP ditampilkan — hanya bila belum ada titik sama sekali
+     tampil "Memuat grafik…". Tanpa ini tiap fetch ulang berkala
+     mengosongkan kanvas sejenak (kedip) walau datanya sudah ada. */
+  if (!h || (h.loading && !h.points.length)) {
     if (note) note.textContent = "Memuat grafik harga " + selectedSymbol + "…";
     ctx.fillStyle = "#848e9c";
     ctx.font = "13px Inter, sans-serif";
