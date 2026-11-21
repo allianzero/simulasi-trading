@@ -54,9 +54,10 @@ def mock_chart(route):
     route.fulfill(status=200, content_type="application/json",
                   body=json.dumps({"prices": pts}))
 
-def new_page(pw, viewport, scenario, price_state):
+def new_page(pw, viewport, scenario, price_state, touch=False):
     browser = pw.chromium.launch()
-    ctx = browser.new_context(viewport=viewport)
+    ctx = browser.new_context(viewport=viewport, has_touch=touch,
+                              is_mobile=touch)
     page = ctx.new_page()
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -1938,6 +1939,48 @@ def test_market_row_no_focus_jump(pw):
     finally:
         browser.close()
 
+def test_welcome_no_autofocus_mobile(pw):
+    """Regresi: layar sambutan TIDAK auto-focus ke input nama di HP.
+    Pernah: setTimeout(...guestNameInput.focus(), 100) di semua
+    perangkat — di HP (touch) keyboard virtual langsung terbuka
+    begitu halaman pertama dibuka, menutupi kartu sambutan sebelum
+    user memilih mengetik. Di desktop (mouse/keyboard) fokus
+    otomatis tetap nyaman dan dipertahankan."""
+    browser, ctx, page, errors = new_page(pw, {"width": 390, "height": 844}, "live", {"live": dict(LIVE)}, touch=True)
+    try:
+        page.goto(BASE)
+        page.wait_for_selector("#welcomeOverlay:not([hidden])", timeout=10000)
+        page.wait_for_timeout(500)  # lewati setTimeout focus 100ms
+        check("welcome-focus: HP touch TIDAK auto-focus ke input nama",
+              page.evaluate("document.activeElement && document.activeElement.id") != "guestNameInput",
+              page.evaluate("document.activeElement && document.activeElement.id"))
+        check("welcome-focus: overlay sambutan tetap terlihat",
+              page.evaluate("!document.getElementById('welcomeOverlay').hidden"))
+        # User tetap bisa mengetuk input sendiri lalu masuk sebagai Guest
+        page.click("#guestNameInput")
+        page.wait_for_timeout(200)
+        check("welcome-focus: ketuk manual tetap memfokuskan input nama",
+              page.evaluate("document.activeElement && document.activeElement.id") == "guestNameInput")
+        page.click("#guestEnterBtn")
+        page.wait_for_function("() => document.getElementById('welcomeOverlay').hidden", timeout=5000)
+        check("welcome-focus: masuk Guest tetap jalan setelah perbaikan",
+              page.evaluate("document.getElementById('welcomeOverlay').hidden"))
+        check("0 error JS (welcome-focus, mobile)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+    # Desktop: fokus otomatis DIPERTAHANKAN (nyaman, ada keyboard fisik)
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        page.goto(BASE)
+        page.wait_for_selector("#welcomeOverlay:not([hidden])", timeout=10000)
+        page.wait_for_timeout(500)
+        check("welcome-focus: desktop tetap auto-focus ke input nama",
+              page.evaluate("document.activeElement && document.activeElement.id") == "guestNameInput",
+              page.evaluate("document.activeElement && document.activeElement.id"))
+        check("0 error JS (welcome-focus, desktop)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_pending_cleared_on_hide(pw):
     """Regresi: menutup kotak konfirmasi MEMBATALKAN pending-nya.
     Pernah: konfirmasi beli dibuka lalu ganti tab Beli/Jual, ketik
@@ -2072,6 +2115,8 @@ def main():
                 test_coin_switch_clears_trade_context(pw)
             if which in ("pendinghide", "all"):
                 test_pending_cleared_on_hide(pw)
+            if which in ("welcomefocus", "all"):
+                test_welcome_no_autofocus_mobile(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
