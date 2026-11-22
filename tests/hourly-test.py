@@ -3247,6 +3247,53 @@ def test_chart_labels_no_overlap_narrow(pw):
         finally:
             browser.close()
 
+def test_profile_menu_short_viewport(pw):
+    # Menu profil di viewport pendek (HP landscape): 5 profil + form +
+    # catatan ≈ 380px, sementara topbar sticky membuat menu tidak ikut
+    # halaman saat di-scroll — bagian bawah (tombol Buat / catatan)
+    # terpotong dan tidak bisa dijangkau. Pernah: di 700x360 tombol
+    # Buat di y 341-383 (di luar layar), di 640x320 menu bawah di y 494.
+    price_state = {"live": dict(LIVE)}
+    for (w, h) in ((844, 390), (700, 360), (640, 320)):
+        browser, ctx, page, errors = new_page(pw, {"width": w, "height": h}, "live", price_state, touch=True)
+        try:
+            enter_guest(page)
+            for nm in ("Dua", "Tiga", "Empat", "Lima"):
+                page.click("#profileBtn")
+                page.wait_for_selector("#profileMenu:not([hidden])", timeout=5000)
+                page.fill("#newProfileName", nm)
+                page.click("#createProfileBtn")
+                page.wait_for_timeout(300)
+            page.click("#profileBtn")
+            page.wait_for_selector("#profileMenu:not([hidden])", timeout=5000)
+            page.wait_for_timeout(400)
+            m = page.evaluate("() => { const r = (s) => { const el = document.querySelector(s);"
+                              " if (!el) return null; const b = el.getBoundingClientRect();"
+                              " return {top: Math.round(b.top), bottom: Math.round(b.bottom)}; };"
+                              " const menu = document.getElementById('profileMenu');"
+                              " return {vh: window.innerHeight, menu: r('#profileMenu'),"
+                              " buat: r('#createProfileBtn'), note: r('#profileNote'),"
+                              " scrollable: menu.scrollHeight > menu.clientHeight + 1}; }")
+            check(f"menu profil 5 {w}x{h}: menu seluruhnya terlihat (bottom <= {h})",
+                  m["menu"] and m["menu"]["bottom"] <= h, str(m["menu"]))
+            check(f"menu profil 5 {w}x{h}: tombol Buat terlihat penuh",
+                  m["buat"] and m["buat"]["bottom"] <= h, str(m["buat"]))
+            # Catatan di ujung bawah isi menu: di viewport sangat pendek
+            # (640x320) isinya memang tidak muat sekaligus — yang penting
+            # catatan TERJANGKAU dengan menggulir menu ke bawah (menu
+            # menggulir di dalam bingkainya, bukan halaman).
+            page.evaluate("() => { const m = document.getElementById('profileMenu');"
+                          " m.scrollTop = m.scrollHeight; }")
+            page.wait_for_timeout(200)
+            m2 = page.evaluate("() => { const el = document.getElementById('profileNote');"
+                               " const b = el.getBoundingClientRect();"
+                               " return {top: Math.round(b.top), bottom: Math.round(b.bottom)}; }")
+            check(f"menu profil 5 {w}x{h}: catatan terjangkau setelah gulir menu",
+                  m2 and m2["bottom"] <= h, str(m2))
+            check(f"0 error JS (menu profil {w}x{h})", len(errors) == 0, "; ".join(errors[:3]))
+        finally:
+            browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -3332,6 +3379,8 @@ def main():
                 test_chart_refetch_10min(pw)
             if which in ("emptyinput", "all"):
                 test_empty_input_stays_silent(pw)
+            if which in ("menushort", "all"):
+                test_profile_menu_short_viewport(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
