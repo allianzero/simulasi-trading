@@ -300,6 +300,56 @@ def test_topbar_offline_narrow(pw):
     finally:
         browser.close()
 
+def test_position_row_no_overlap_narrow(pw):
+    # Baris posisi di layar sempit (<=400px): kolom info terlalu sempit
+    # untuk angka "Rp 1.120.000.000" yang tidak bisa diputus di tengah —
+    # teks detail meluber keluar kotaknya dan menumpuk teks PnL
+    # (terukur: tumpang tindih 78px di 320px, 38px di 360px, 8px di
+    # 390px; hilang di 400px). Perbaikan: .position-row membungkus
+    # di <=400px (info selebar kartu, PnL + Tutup di baris kedua).
+    price_state = {"live": dict(LIVE)}
+    overlap_js = """() => {
+      const out = [];
+      document.querySelectorAll('.position-row').forEach((row) => {
+        const detail = row.querySelector('.position-detail');
+        const pnl = row.querySelector('.holding-value');
+        if (!detail || !pnl) return;
+        const rg = document.createRange(); rg.selectNodeContents(detail);
+        const db = rg.getBoundingClientRect();
+        const pr = pnl.getBoundingClientRect();
+        out.push({
+          xOverlap: Math.round(Math.max(0, Math.min(db.right, pr.right) - Math.max(db.left, pr.left))),
+          yOverlap: Math.round(Math.max(0, Math.min(db.bottom, pr.bottom) - Math.max(db.top, pr.top)))});
+      });
+      return out;
+    }"""
+    for w in (320, 360, 390, 420):
+        browser, ctx, page, errors = new_page(pw, {"width": w, "height": 844}, "live", price_state, touch=True)
+        try:
+            enter_guest(page)
+            page.wait_for_timeout(600)
+            page.fill("#futMarginInput", "100000")
+            page.click("#futBtn")
+            page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+            page.click("#futConfirmYes")
+            page.wait_for_timeout(500)
+            check(f"posisi {w}px: posisi Long 10x terbuka",
+                  "LONG" in page.text_content("#futPositions"))
+            m = page.evaluate(overlap_js)
+            check(f"posisi {w}px: PnL tidak menumpuk teks detail",
+                  len(m) == 1 and (m[0]["xOverlap"] == 0 or m[0]["yOverlap"] == 0), str(m))
+            btn = page.locator("#futPositions [data-pos-id]")
+            box = btn.bounding_box()
+            check(f"posisi {w}px: tombol Tutup di dalam viewport",
+                  box is not None and box["x"] + box["width"] <= w + 1, str(box))
+            btn.click()
+            page.wait_for_timeout(400)
+            check(f"posisi {w}px: tombol Tutup berfungsi (posisi tertutup)",
+                  "Belum ada posisi" in page.text_content("#futPositions"))
+            check(f"0 error JS (posisi {w}px)", len(errors) == 0, "; ".join(errors[:3]))
+        finally:
+            browser.close()
+
 def test_offline(pw):
     price_state = {"live": dict(LIVE)}
     browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "offline", price_state)
@@ -3034,6 +3084,8 @@ def main():
                 test_id_number_format(pw)
                 test_id_rp_prefix(pw)
                 test_enter_key(pw)
+            if which in ("posoverlap", "all"):
+                test_position_row_no_overlap_narrow(pw)
             if which in ("resetarmed", "all"):
                 test_reset_armed_profile_switch(pw)
             if which in ("profilectx", "all"):
