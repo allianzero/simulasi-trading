@@ -2552,6 +2552,37 @@ def test_welcome_behind_overlay(pw):
     finally:
         browser.close()
 
+def test_toast_above_welcome_overlay(pw):
+    """Regresi: toast harus terlihat saat overlay sambutan tampil.
+
+    Pernah: toast z-index 100 di bawah overlay sambutan (200) — panel
+    trade di belakang overlay tetap bisa difokus lewat keyboard
+    sehingga toast dari aksi itu tidak terlihat sama sekali.
+    Perbaikan: toast z-index 300. (elementFromPoint tidak bisa
+    dipakai di sini: .toast punya pointer-events none, jadi hit-test
+    melewatinya — ceknya perbandingan z-index; keduanya anak langsung
+    <body> sehingga satu konteks stacking dan perbandingan itu eksak.)
+    """
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        page.goto(BASE)
+        page.wait_for_selector("#welcomeOverlay:not([hidden])", timeout=10000)
+        page.evaluate("() => showToast('Uji toast di atas overlay', 'error')")
+        page.wait_for_function("() => document.getElementById('toast').classList.contains('show')", timeout=5000)
+        check("toast-overlay: toast tampil (class show, opacity 1) saat overlay sambutan terbuka",
+              page.evaluate("getComputedStyle(document.getElementById('toast')).opacity === '1'"))
+        check("toast-overlay: toast & overlay satu konteks stacking (anak langsung body)",
+              page.evaluate("document.getElementById('toast').parentElement === document.body && document.getElementById('welcomeOverlay').parentElement === document.body"))
+        check("toast-overlay: z-index toast di atas overlay sambutan",
+              page.evaluate("parseInt(getComputedStyle(document.getElementById('toast')).zIndex, 10) > parseInt(getComputedStyle(document.getElementById('welcomeOverlay')).zIndex, 10)"),
+              page.evaluate("'toast=' + getComputedStyle(document.getElementById('toast')).zIndex + ' overlay=' + getComputedStyle(document.getElementById('welcomeOverlay')).zIndex"))
+        page.click("#guestEnterBtn")
+        page.wait_for_function("() => document.getElementById('welcomeOverlay').hidden", timeout=5000)
+        check("toast-overlay: masuk Guest tetap jalan setelah toast", "5.000.000" in cash_text(page), cash_text(page))
+        check("0 error JS (toast-overlay)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_double_enter_profile(pw):
     """Regresi: Enter ganda di input nama TIDAK membuat 2 profil.
 
@@ -4103,7 +4134,8 @@ GROUPS = [
     ("pendinghide", [test_pending_cleared_on_hide]),
     ("multitab", [test_multitab_sync, test_multitab_snapshot_keeps_context]),
     ("welcomefocus", [test_welcome_no_autofocus_mobile,
-                      test_welcome_behind_overlay, test_double_enter_profile]),
+                      test_welcome_behind_overlay, test_toast_above_welcome_overlay,
+                      test_double_enter_profile]),
     ("quickzero", [test_quick_zero_feedback]),
     ("invalidinput", [test_invalid_input]),
     ("quickdot", [test_quick_dot_decimal]),
