@@ -648,6 +648,19 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
   .position-row { flex-wrap: wrap; row-gap: 8px; }
   .position-row .position-info { flex: 1 1 100%; }
   .position-row .holding-value { flex: 1 1 auto; }
+  /* Baris pasar di layar sangat sempit: kolom harga min-width 148px +
+     ikon 40px + gap menyisakan ~16px untuk nama/simbol di 320px
+     sehingga "BTC / IDR" membungkus jadi 3 baris dan daftar pasar
+     terlihat rusak di semua 8 koin. Ikon + harga diperkecil, padding
+     kartu dilonggarkan 18px -> 12px, supaya nama + simbol muat satu
+     baris (terukur: butuh ~66px, tersedia ~73px di 320px). */
+  .card { padding: 12px; }
+  .market-row { grid-template-columns: 32px minmax(0, 1fr) auto; gap: 8px; padding: 10px 8px; }
+  .coin-icon { width: 32px; height: 32px; font-size: 1rem; }
+  .coin-name { font-size: 0.9rem; }
+  .coin-symbol { font-size: 0.72rem; white-space: nowrap; }
+  .coin-price { min-width: 0; }
+  .coin-price .price { font-size: 0.8rem; }
 }
 /* Label kecil penanda PnL beku: dihitung dari harga live terakhir,
    bukan dari harga contoh offline. */
