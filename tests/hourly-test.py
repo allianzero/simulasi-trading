@@ -928,6 +928,64 @@ def test_sell_max(pw):
     finally:
         browser.close()
 
+def test_dust_sell_zero_holdings(pw):
+    """Regresi: jual debu (<=1e-8 koin) saat holding 0 tidak boleh jadi
+    trade 0 koin. Pernah: ketik 0,000000001 BTC di mode Jual tanpa
+    holding -> toleransi pembulatan di computeTrade menjepit ke 0 koin
+    lalu lolos (pratinjau 'Jual 0 BTC, terima Rp0'), klik Ya melempar
+    TypeError (state.holdings[symbol] tidak ada) dan kotak konfirmasi
+    macet terbuka. Kini ditolak 'Koin tidak cukup' sebelum konfirmasi."""
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        page.click("#tabSell")
+        page.fill("#amountInput", "0,000000001")
+        page.wait_for_timeout(500)
+        check("dust-sell: jual debu tanpa holding ditolak 'Koin tidak cukup'",
+              "Koin tidak cukup" in page.text_content("#tradeError"),
+              page.text_content("#tradeError"))
+        check("dust-sell: pratinjau 'Jual 0 BTC' tidak muncul",
+              page.is_hidden("#previewBox"),
+              page.text_content("#previewBox")[:120])
+        page.click("#tradeBtn")
+        page.wait_for_timeout(300)
+        check("dust-sell: kotak konfirmasi tidak terbuka",
+              page.is_hidden("#confirmBox"))
+        check("dust-sell: kas tetap Rp5.000.000, riwayat tetap kosong",
+              "5.000.000" in cash_text(page) and
+              "Belum ada transaksi" in page.text_content("#tradeHistory"),
+              cash_text(page))
+        # Jual debu DENGAN holding tetap jalan normal (bukan 0 koin):
+        # beli dulu Rp1.000.000, lalu jual 0,000000001 BTC.
+        page.click("#tabBuy")
+        page.fill("#amountInput", "1000000")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function(
+            "() => document.getElementById('cashBalance').textContent.includes('4.000.000')",
+            timeout=5000)
+        page.click("#tabSell")
+        page.fill("#amountInput", "0,000000001")
+        page.wait_for_timeout(300)
+        check("dust-sell: jual debu dengan holding menampilkan pratinjau",
+              not page.is_hidden("#previewBox") and page.is_hidden("#tradeError"),
+              page.text_content("#tradeError"))
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_timeout(500)
+        check("dust-sell: jual debu dengan holding berhasil, tanpa error JS",
+              "4.000.001" in cash_text(page) or "4.000.000" in cash_text(page),
+              cash_text(page))
+        check("0 error JS (dust-sell)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_tab_switch_clears_input(pw):
     """Regresi: ganti tab Beli/Jual harus mengosongkan input jumlah.
     Pernah: ketik Rp1.000.000 di mode Beli, ketuk tab Jual — input tetap
@@ -3199,6 +3257,7 @@ def main():
                 test_mobile_live(pw)
                 test_lev_chips_narrow(pw)
                 test_sell_max(pw)
+                test_dust_sell_zero_holdings(pw)
                 test_tab_switch_clears_input(pw)
                 test_profile_name_escaped(pw)
                 test_overlapping_confirms(pw)
