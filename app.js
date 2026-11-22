@@ -309,16 +309,34 @@ function parseAmount(str) {
   return isFinite(n) ? n : NaN;
 }
 
-/* Angka ringkas untuk sumbu grafik, mis. Rp5,2 jt / Rp1,13 M */
-function fmtCompact(n) {
+/* Angka ringkas untuk sumbu grafik, mis. Rp5,2 jt / Rp1,13 M.
+   Satuan dipilih SEKALI dari nilai maks sumbu (axisUnit) lalu
+   dipakai semua label sumbu itu (fmtCompactAxis). fmtCompact()
+   yang lama memilih satuan PER LABEL — pada grafik BTC ~Rp1,12
+   Miliar, garis grid bawah (Rp998,77 jt, < 1e9) memakai "jt"
+   sementara garis di atasnya (Rp1,04 M, > 1e9) memakai "M":
+   satu sumbu, dua satuan. Kini: "Rp0,99 M" di bawah, "Rp1,15 M"
+   di atas — satu satuan di seluruh sumbu. */
+function axisUnit(maxV) {
+  var abs = Math.abs(maxV);
+  if (abs >= 1e9) return " M";
+  if (abs >= 1e6) return " jt";
+  if (abs >= 1e3) return " rb";
+  return "";
+}
+function fmtCompactAxis(n, unit) {
   if (!isFinite(n)) return "—";
-  var abs = Math.abs(n);
-  var scaled, unit;
-  if (abs >= 1e9) { scaled = n / 1e9; unit = " M"; }
-  else if (abs >= 1e6) { scaled = n / 1e6; unit = " jt"; }
-  else if (abs >= 1e3) { scaled = n / 1e3; unit = " rb"; }
-  else return fmtIDR(n);
-  return "Rp" + scaled.toLocaleString("id-ID", { maximumFractionDigits: 2 }) + unit;
+  if (!unit) return fmtIDR(n);
+  var scaled = unit === " M" ? n / 1e9 : unit === " jt" ? n / 1e6 : n / 1e3;
+  /* Nilai di bawah 1 satuan (mis. Rp998,77 jt pada sumbu "M")
+     butuh 2 desimal: tanpa ini 0,99877 dibulatkan jadi "Rp1 M"
+     — sama persis dengan label Rp1.000.000.000 dan menyesatkan. */
+  var minDec = Math.abs(scaled) < 1 ? 2 : 0;
+  return "Rp" + scaled.toLocaleString("id-ID",
+    { minimumFractionDigits: minDec, maximumFractionDigits: 2 }) + unit;
+}
+function fmtCompact(n) {
+  return fmtCompactAxis(n, axisUnit(n));
 }
 
 function fmtTime(ts) {
@@ -805,10 +823,13 @@ function drawChart() {
   }
   function y(v) { return bottom - ((v - min) / (max - min)) * (bottom - top); }
 
-  /* Garis grid horizontal + label sumbu */
+  /* Garis grid horizontal + label sumbu — satu satuan untuk seluruh
+     sumbu (dipilih dari nilai maks), bukan per label. */
   ctx.font = "10px 'IBM Plex Mono', monospace";
   ctx.textAlign = "left";
   var gridLines = 4;
+  var yUnit = axisUnit(max);
+  var yLabels = [];
   for (var g = 0; g <= gridLines; g++) {
     var gv = min + (max - min) * (g / gridLines);
     var gy = y(gv);
@@ -819,7 +840,9 @@ function drawChart() {
     ctx.lineTo(right, gy);
     ctx.stroke();
     ctx.fillStyle = "#5e6673";
-    ctx.fillText(fmtCompact(gv), 4, gy + 3);
+    var yLab = fmtCompactAxis(gv, yUnit);
+    yLabels.push(yLab);
+    ctx.fillText(yLab, 4, gy + 3);
   }
 
   /* Garis acuan modal awal (putus-putus) + label */
@@ -926,7 +949,8 @@ function drawChart() {
   /* Hook koordinat titik grafik portofolio (bukan bagian UI). */
   window.__portfolioChart = {
     points: hist.map(function (p, i) { return { t: p.t, v: p.v, x: x(i), y: y(p.v) }; }),
-    w: w, h: h
+    w: w, h: h,
+    yLabels: yLabels
   };
 }
 
@@ -1182,9 +1206,12 @@ function drawPriceChart() {
   }
   function y(v) { return bottom - ((v - min) / (max - min)) * (bottom - top); }
 
-  /* Grid horizontal + label sumbu */
+  /* Grid horizontal + label sumbu — satu satuan untuk seluruh
+     sumbu (dipilih dari nilai maks), bukan per label. */
   ctx.font = "10px 'IBM Plex Mono', monospace";
   ctx.textAlign = "left";
+  var yUnit = axisUnit(max);
+  var yLabels = [];
   for (var g = 0; g <= 4; g++) {
     var gv = min + (max - min) * (g / 4);
     var gy = y(gv);
@@ -1192,8 +1219,12 @@ function drawPriceChart() {
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(left, gy); ctx.lineTo(right, gy); ctx.stroke();
     ctx.fillStyle = "#5e6673";
-    ctx.fillText(fmtCompact(gv), 4, gy + 3);
+    var yLab = fmtCompactAxis(gv, yUnit);
+    yLabels.push(yLab);
+    ctx.fillText(yLab, 4, gy + 3);
   }
+  /* Hook label sumbu Y untuk pengujian otomatis (bukan bagian UI). */
+  if (window.__priceChart) window.__priceChart.yLabels = yLabels;
 
   /* Garis harga + isi gradien — digambar SEBELUM garis entry /
      likuidasi / mark + labelnya, supaya garis harga tidak menimpa
