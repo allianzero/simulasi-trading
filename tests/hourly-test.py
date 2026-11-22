@@ -393,6 +393,10 @@ def test_position_row_no_overlap_desktop(pw):
       return out;
     }"""
     for w in (1280, 1024, 800, 500):
+        # Reset harga live di AWAL tiap iterasi (lihat chartlabelorder):
+        # tanpa ini iterasi ke-2 dst membuka posisi di harga geser
+        # Rp1.232.000.000 sehingga PnL Rp0, bukan +Rp100.000.
+        price_state["live"] = dict(LIVE)
         browser, ctx, page, errors = new_page(pw, {"width": w, "height": 800}, "live", price_state)
         try:
             enter_guest(page)
@@ -409,7 +413,7 @@ def test_position_row_no_overlap_desktop(pw):
             check(f"posisi desktop {w}px: posisi Long 10x terbuka",
                   "LONG" in page.text_content("#futPositions"))
             check(f"posisi desktop {w}px: PnL panjang tampil (+Rp100.000)",
-                  "+Rp100.000" in page.text_content("#futPositions"),
+                  "+Rp 100.000" in page.text_content("#futPositions"),
                   page.text_content("#futPositions")[:200])
             m = page.evaluate(overlap_js)
             check(f"posisi desktop {w}px: PnL tidak menumpuk teks detail",
@@ -3597,6 +3601,12 @@ def test_chart_label_draw_order(pw):
               points: h.points, live: h.live};
     }"""
     for w in (1280, 390):
+        # Reset harga live di AWAL tiap iterasi: iterasi sebelumnya
+        # meninggalkan bitcoin di Rp1.232.000.000 (harga geser +10%),
+        # sehingga posisi iterasi berikutnya terbuka di harga itu dan
+        # garis mark berimpit dengan entry (tidak digambar) -> tes
+        # timeout menunggu 3 garis.
+        price_state["live"] = dict(LIVE)
         browser, ctx, page, errors = new_page(pw, {"width": w, "height": 844}, "live", price_state, touch=(w == 390))
         try:
             enter_guest(page)
@@ -3624,6 +3634,50 @@ def test_chart_label_draw_order(pw):
             check(f"0 error JS (chartlabelorder {w}px)", len(errors) == 0, "; ".join(errors[:3]))
         finally:
             browser.close()
+
+def test_portfolio_chart_time_axis(pw):
+    # Grafik portofolio: sumbu X memakai indeks titik, bukan waktu —
+    # lompatan nilai setelah jeda panjang tanpa snapshot (offline
+    # berjam-jam lalu harga live kembali) digambar dalam SATU langkah
+    # indeks (~2px dari 240 titik) sehingga tampak seperti dinding
+    # tegak di ujung kanan. Terbukti live 22 Nov 21:48 WIB + probe:
+    # 239 titik datar Rp4.917.329 lalu 1 titik Rp5.113.383 "sekarang"
+    # -> segmen terakhir dx 2,5px dy 83,2px (88,3 derajat).
+    # Perbaikan: sumbu X berbasis waktu (t pertama -> kiri, t terakhir
+    # -> kanan). Tes: seed riwayat berjeda, cek segmen terakhir
+    # membentang selebar jeda (bukan 1 langkah indeks) + sudut landai.
+    import math, time
+    now = int(time.time() * 1000)
+    hist = [{"t": now - 11 * 3600 * 1000 + i * 30000, "v": 4917329} for i in range(239)]
+    hist.append({"t": now, "v": 5113383})
+    store = {"version": 2, "activeProfileId": "p1",
+             "profiles": [{"id": "p1", "name": "Bray", "createdAt": 1,
+                           "cash": 5113383, "holdings": {}, "trades": [],
+                           "history": hist, "futures": []}]}
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        page.goto(BASE)
+        page.evaluate("(s) => localStorage.setItem('simulasi-trading-v2', JSON.stringify(s))", store)
+        page.reload()
+        page.wait_for_timeout(1500)
+        page.wait_for_function("() => window.__portfolioChart && window.__portfolioChart.points.length === 240", timeout=10000)
+        m = page.evaluate("() => window.__portfolioChart")
+        pts = m["points"]
+        dx = pts[-1]["x"] - pts[-2]["x"]
+        dy = abs(pts[-1]["y"] - pts[-2]["y"])
+        angle = math.degrees(math.atan2(dy, dx)) if dx > 0 else 90.0
+        check("pf-time-axis: hook koordinat grafik portofolio terbaca",
+              len(pts) == 240, str(len(pts)))
+        check("pf-time-axis: segmen terakhir membentang selebar jeda waktu (bukan 1 langkah indeks)",
+              dx > 0.4 * m["w"], "dx=%.1fpx dari lebar %spx" % (dx, m["w"]))
+        check("pf-time-axis: sudut segmen terakhir landai (<30 derajat, bukan dinding tegak)",
+              angle < 30, "sudut=%.1f derajat (dx=%.1f, dy=%.1f)" % (angle, dx, dy))
+        check("pf-time-axis: titik terakhir di ujung kanan kanvas",
+              abs(pts[-1]["x"] - (m["w"] - 10)) < 2, str(pts[-1]["x"]))
+        check("0 error JS (pf-time-axis)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
 
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
@@ -3714,6 +3768,8 @@ def main():
                 test_chart_refetch_fail_keeps_live_series(pw)
             if which in ("chartlabelorder", "all"):
                 test_chart_label_draw_order(pw)
+            if which in ("charttime", "all"):
+                test_portfolio_chart_time_axis(pw)
             if which in ("emptyinput", "all"):
                 test_empty_input_stays_silent(pw)
             if which in ("menushort", "all"):
