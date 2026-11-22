@@ -1011,21 +1011,33 @@ async function fetchPriceChart(symbol) {
     h.fetchedAt = Date.now();
   } catch (e) {
     clearTimeout(timer);
-    /* market_chart gagal — JANGAN jangkar deret pada harga contoh
-       bila harga live tersedia: pakai harga live saat ini, atau
-       harga live terakhir yang tersimpan. Hanya bila keduanya tidak
-       ada, jatuh ke harga contoh (deret offline). */
-    var anchor = null;
-    if (pricesLive && prices[symbol]) anchor = prices[symbol];
-    else if (lastLivePrices[symbol]) anchor = lastLivePrices[symbol];
-    h.points = syntheticSeries(symbol, anchor);
-    h.live = false;
-    h.estimated = !!anchor;
-    /* Tanpa jangkar (belum ada harga live sama sekali — misal
-       market_chart gagal sebelum fetch harga pertama selesai),
-       jangan kunci deret contoh selama 60 detik: biarkan
-       applyPrices mencoba lagi begitu harga live tiba. */
-    h.fetchedAt = anchor ? Date.now() : null;
+    /* market_chart gagal — bila sudah ada deret LIVE 24 jam (>10
+       titik), PERTAHANKAN deret itu: refetch berkala yang kena 429 /
+       timeout tidak boleh mengganti data asli CoinGecko dengan deret
+       sintetis. appendPricePoint() tetap menempel harga live di ujung,
+       dan fetch dicoba lagi setelah jendela 10 menit (fetchedAt =
+       sekarang, h.live tetap true). Deret sintetis hanya bila belum
+       ada deret live sama sekali. */
+    if (h.live && h.points.length > 10) {
+      h.estimated = false;
+      h.fetchedAt = Date.now();
+    } else {
+      /* market_chart gagal — JANGAN jangkar deret pada harga contoh
+         bila harga live tersedia: pakai harga live saat ini, atau
+         harga live terakhir yang tersimpan. Hanya bila keduanya tidak
+         ada, jatuh ke harga contoh (deret offline). */
+      var anchor = null;
+      if (pricesLive && prices[symbol]) anchor = prices[symbol];
+      else if (lastLivePrices[symbol]) anchor = lastLivePrices[symbol];
+      h.points = syntheticSeries(symbol, anchor);
+      h.live = false;
+      h.estimated = !!anchor;
+      /* Tanpa jangkar (belum ada harga live sama sekali — misal
+         market_chart gagal sebelum fetch harga pertama selesai),
+         jangan kunci deret contoh selama 60 detik: biarkan
+         applyPrices mencoba lagi begitu harga live tiba. */
+      h.fetchedAt = anchor ? Date.now() : null;
+    }
   }
   h.loading = false;
   drawPriceChart();
