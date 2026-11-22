@@ -3579,6 +3579,52 @@ def test_stale_active_profile_id(pw):
     finally:
         browser.close()
 
+def test_chart_label_draw_order(pw):
+    # Label garis di grafik harga 24 jam dilintasi garis harga: label
+    # "Entry LONG 10x Rp1.080.542.121" tertutup sebagian garis oranye
+    # karena drawPriceChart() menggambar garis entry/likuidasi/mark +
+    # labelnya SEBELUM garis harga. Perbaikan: garis harga + gradien
+    # digambar dulu, baru garis + label di atasnya. Hook
+    # window.__priceChart.order mencatat urutan gambar (price vs
+    # firstLabel) — harga digeser +10% setelah buka posisi supaya
+    # garis Mark juga muncul (3 garis: entry, likuidasi, mark).
+    price_state = {"live": dict(LIVE)}
+    order_js = """() => {
+      const h = window.__priceChart;
+      if (!h) return null;
+      return {order: h.order || null,
+              lines: (h.lines || []).map((l) => l.type),
+              points: h.points, live: h.live};
+    }"""
+    for w in (1280, 390):
+        browser, ctx, page, errors = new_page(pw, {"width": w, "height": 844}, "live", price_state, touch=(w == 390))
+        try:
+            enter_guest(page)
+            page.wait_for_timeout(600)
+            page.fill("#futMarginInput", "100000")
+            page.click("#futBtn")
+            page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+            page.click("#futConfirmYes")
+            page.wait_for_timeout(500)
+            price_state["live"] = dict(LIVE)
+            price_state["live"]["bitcoin"] = {"idr": 1232000000, "idr_24h_change": 10.0}
+            page.click("#refreshBtn")
+            page.wait_for_timeout(2500)
+            page.wait_for_function(
+                "() => window.__priceChart && window.__priceChart.order && window.__priceChart.lines.length >= 3",
+                timeout=10000)
+            m = page.evaluate(order_js)
+            check(f"chartlabelorder {w}px: hook order grafik terbaca", m is not None and m["order"] is not None, str(m))
+            check(f"chartlabelorder {w}px: 3 garis (entry, likuidasi, mark)",
+                  m is not None and m["lines"] == ["entry", "liq", "mark"], str(m))
+            check(f"chartlabelorder {w}px: garis harga digambar SEBELUM label garis",
+                  m is not None and m["order"] is not None
+                  and m["order"]["price"] > 0 and m["order"]["firstLabel"] > 0
+                  and m["order"]["price"] < m["order"]["firstLabel"], str(m))
+            check(f"0 error JS (chartlabelorder {w}px)", len(errors) == 0, "; ".join(errors[:3]))
+        finally:
+            browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -3666,6 +3712,8 @@ def main():
             if which in ("chartrefetch", "all"):
                 test_chart_refetch_10min(pw)
                 test_chart_refetch_fail_keeps_live_series(pw)
+            if which in ("chartlabelorder", "all"):
+                test_chart_label_draw_order(pw)
             if which in ("emptyinput", "all"):
                 test_empty_input_stays_silent(pw)
             if which in ("menushort", "all"):
