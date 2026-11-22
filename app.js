@@ -735,6 +735,7 @@ function drawChart() {
   if (!state) return;
   var hist = state.history;
   if (hist.length === 0) {
+    window.__chartLabels = null;
     ctx.fillStyle = "#848e9c";
     ctx.font = "13px Inter, sans-serif";
     ctx.textAlign = "center";
@@ -790,14 +791,41 @@ function drawChart() {
   var label = "Modal awal " + fmtIDR(INITIAL_CASH);
   ctx.font = "10px Inter, sans-serif";
   var tw = ctx.measureText(label).width;
+  /* Label nilai terakhir (kanan, di atas titik) bisa menumpuk pill
+     "Modal awal" bila nilainya ~ modal awal (profil baru: baseY == ly)
+     dan kanvas sempit — di 320px pill x 66–191 vs label x 163–250.
+     Bila bertabrakan: geser label nilai ke bawah titik; kalau tidak
+     muat, geser pill ke bawah garisnya; terakhir, pill ke pojok atas. */
+  var lastV = hist[hist.length - 1].v;
+  var ly = y(lastV);
+  ctx.font = "bold 12px 'IBM Plex Mono', monospace";
+  var lastTw = ctx.measureText(fmtIDR(lastV)).width;
+  ctx.font = "10px Inter, sans-serif";
+  var pillTop = Math.max(2, baseY - 18);
+  var lastBase = Math.max(14, ly - 10);
+  var pillRect = { x0: left + 4, x1: left + 4 + tw + 12, y0: pillTop, y1: pillTop + 15 };
+  var lastRect = { x0: right - 2 - lastTw, x1: right - 2, y0: lastBase - 12, y1: lastBase };
+  function rectsHit(a, b) {
+    return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+  }
+  if (rectsHit(pillRect, lastRect)) {
+    var pillBelow = { x0: pillRect.x0, x1: pillRect.x1, y0: baseY + 4, y1: baseY + 19 };
+    var lastBelow = { x0: lastRect.x0, x1: lastRect.x1, y0: ly + 10, y1: ly + 22 };
+    if (ly + 22 <= h - 20 && !rectsHit(pillRect, lastBelow)) {
+      lastBase = ly + 22;
+    } else if (baseY + 19 <= bottom && !rectsHit(pillBelow, lastRect)) {
+      pillTop = baseY + 4;
+    } else {
+      pillTop = 2;
+    }
+  }
   ctx.fillStyle = "rgba(240,185,11,0.16)";
-  roundRectPath(ctx, left + 4, Math.max(2, baseY - 18), tw + 12, 15, 7);
+  roundRectPath(ctx, left + 4, pillTop, tw + 12, 15, 7);
   ctx.fill();
   ctx.fillStyle = "#f0b90b";
-  ctx.fillText(label, left + 10, Math.max(13, baseY - 7));
+  ctx.fillText(label, left + 10, pillTop + 11);
 
   /* Garis nilai portofolio — dihaluskan (kurva) + isi gradien */
-  var lastV = hist[hist.length - 1].v;
   var up = lastV >= INITIAL_CASH;
   var color = up ? "#0ecb81" : "#f6465d";
   ctx.beginPath();
@@ -832,7 +860,7 @@ function drawChart() {
   ctx.fillText(fmtClock(hist[hist.length - 1].t), right, h - 8);
 
   /* Titik terakhir + label nilai */
-  var lx = x(hist.length - 1), ly = y(lastV);
+  var lx = x(hist.length - 1);
   ctx.beginPath();
   ctx.arc(lx, ly, 5.5, 0, Math.PI * 2);
   ctx.fillStyle = "#eaecef";
@@ -844,7 +872,13 @@ function drawChart() {
   ctx.fillStyle = "#eaecef";
   ctx.font = "bold 12px 'IBM Plex Mono', monospace";
   ctx.textAlign = "right";
-  ctx.fillText(fmtIDR(lastV), right - 2, Math.max(14, ly - 10));
+  ctx.fillText(fmtIDR(lastV), right - 2, lastBase);
+
+  /* Hook untuk pengujian otomatis (bukan bagian UI). */
+  window.__chartLabels = {
+    pill: { x0: left + 4, x1: left + 4 + tw + 12, y0: pillTop, y1: pillTop + 15 },
+    last: { x0: right - 2 - lastTw, x1: right - 2, y0: lastBase - 12, y1: lastBase }
+  };
 }
 
 /* ---------------- Grafik harga koin ---------------- */
