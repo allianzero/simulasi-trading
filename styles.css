@@ -795,6 +795,17 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
   /* Label "1x"/"100x" di ujung baris leverage disembunyikan — nilainya
      sudah ada di chip, dan di layar sempit label itu terpotong. */
   .lev-row > span { display: none; }
+  /* Baris aksi topbar (badge + Refresh + profil) tidak boleh mendorong
+     tombol profil ke luar layar saat badge offline panjang: "HARGA
+     CONTOH (OFFLINE)" 198px + Refresh 99px + avatar 40px = 352px,
+     sementara lebar konten cuma 288px di 320px (328px di 360px) —
+     tombol profil jatuh di x 328-368, tidak terlihat dan tidak bisa
+     diketik (body scrollWidth 368, disembunyikan overflow-x:hidden).
+     flex-shrink:0 di .top-actions mencegah baris mengecil; di layar
+     sempit biarkan baris membungkus ke dua baris supaya semua tombol
+     tetap di dalam layar. Saat live (badge 109px) baris muat satu
+     baris, jadi tidak ada perubahan. */
+  .top-actions { flex-wrap: wrap; flex-shrink: 1; min-width: 0; }
 }
 
 @media (min-width: 560px) {
