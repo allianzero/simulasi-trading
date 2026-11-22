@@ -3754,6 +3754,148 @@ def test_yaxis_single_unit(pw):
     finally:
         browser.close()
 
+def test_xaxis_date_labels(pw):
+    # Label waktu sumbu X grafik tidak menyebut tanggal: grafik
+    # portofolio memakai jam saja di kedua ujung (fmtClock) — riwayat
+    # merentang berhari-hari tampil "23.10" -> "01.05" tanpa tanggal,
+    # tampak seperti waktu mundur; grafik harga 24 jam label kanannya
+    # hanya jam ("19.33") padahal titik kirinya kemarin.
+    # Perbaikan: bila rentang melewati pergantian hari, kedua label
+    # memakai tanggal+jam (fmtTime); bila satu hari yang sama, jam
+    # saja. Hook window.__portfolioChart.xLabels /
+    # window.__priceChart.xLabels memuat kedua label yang digambar.
+    # Tes: riwayat 48 jam -> kedua label portofolio bertanggal & beda
+    # hari; profil baru (riwayat hanya "sekarang") -> kedua label jam
+    # saja; deret harga 24 jam (mock) -> kedua label bertanggal &
+    # beda hari; di HP 390px kedua label bertanggal tidak saling
+    # menumpuk. (Riwayat lama satu hari TIDAK dipakai untuk kasus
+    # jam-saja: snapshotPortfolio() selalu menempel titik "sekarang"
+    # ke riwayat yang ujungnya sudah >60 detik, jadi riwayat lama
+    # pasti merentang ke hari ini — profil baru adalah kasus
+    # satu-hari yang sebenarnya.)
+    import json, re, time
+    now = int(time.time() * 1000)
+    hist_multi = [{"t": now - (48 - i * 2) * 3600 * 1000, "v": 4900000 + i * 4000}
+                  for i in range(25)]
+    pts = [[now - (96 - i) * 900000, 1100000000 + i * 200000] for i in range(97)]
+
+    def store_for(hist):
+        return {"version": 2, "activeProfileId": "p1",
+                "profiles": [{"id": "p1", "name": "Bray", "createdAt": 1,
+                              "cash": 5100000, "holdings": {}, "trades": [],
+                              "history": hist, "futures": []}]}
+
+    def has_date(label):
+        return re.search(r"\d{1,2} [A-Z][a-z]{2}", label) is not None
+
+    def is_clock(label):
+        return re.fullmatch(r"\d{2}\.\d{2}", label) is not None
+
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        url = route.request.url
+        if "simple/price" in url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps({"prices": pts}))
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.evaluate("(s) => localStorage.setItem('simulasi-trading-v2', JSON.stringify(s))",
+                      store_for(hist_multi))
+        page.reload()
+        page.wait_for_timeout(1500)
+        page.wait_for_function(
+            "() => window.__portfolioChart && window.__portfolioChart.xLabels && window.__portfolioChart.xLabels.length === 2",
+            timeout=10000)
+        page.wait_for_function(
+            "() => window.__priceChart && window.__priceChart.xLabels && window.__priceChart.xLabels.length === 2",
+            timeout=15000)
+        pl = page.evaluate("() => window.__portfolioChart.xLabels")
+        cl = page.evaluate("() => window.__priceChart.xLabels")
+        check("xaxis: label portofolio 48 jam terbaca (2 label)", len(pl) == 2, str(pl))
+        check("xaxis: kedua label portofolio 48 jam bertanggal",
+              has_date(pl[0]) and has_date(pl[1]), str(pl))
+        check("xaxis: label portofolio 48 jam beda hari",
+              pl[0].split(",")[0] != pl[1].split(",")[0], str(pl))
+        check("xaxis: label grafik harga 24 jam terbaca (2 label)", len(cl) == 2, str(cl))
+        check("xaxis: kedua label grafik harga 24 jam bertanggal",
+              has_date(cl[0]) and has_date(cl[1]), str(cl))
+        check("xaxis: label grafik harga 24 jam beda hari (kemarin -> hari ini)",
+              cl[0].split(",")[0] != cl[1].split(",")[0], str(cl))
+
+        # Profil baru: riwayat hanya titik "sekarang" (satu hari yang
+        # sama) -> kedua label jam saja. Pakai konteks browser baru
+        # supaya localStorage bersih (tanpa riwayat 48 jam di atas).
+        browser.close()
+        browser = pw.chromium.launch()
+        ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+        page = ctx.new_page()
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+                if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+        page.route("**/api.coingecko.com/**", cg)
+        page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+        page.route("**/api.binance.com/**", lambda r: r.abort())
+        enter_guest(page)
+        # Profil baru riwayatnya kosong sampai refresh harga pertama
+        # (fetch awal jalan sebelum state ada, jadi tidak snapshot) —
+        # picu satu refresh supaya snapshot "sekarang" terbentuk.
+        page.click("#refreshBtn")
+        page.wait_for_timeout(1500)
+        page.wait_for_function(
+            "() => window.__portfolioChart && window.__portfolioChart.xLabels && window.__portfolioChart.xLabels.length === 2",
+            timeout=10000)
+        pl2 = page.evaluate("() => window.__portfolioChart.xLabels")
+        check("xaxis: label portofolio profil baru terbaca (2 label)", len(pl2) == 2, str(pl2))
+        check("xaxis: kedua label portofolio profil baru jam saja (tanpa tanggal)",
+              is_clock(pl2[0]) and is_clock(pl2[1]), str(pl2))
+        check("0 error JS (xaxis desktop)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
+    # HP 390px: label bertanggal (lebih panjang) tidak boleh menumpuk.
+    browser, ctx, page, errors = new_page(pw, {"width": 390, "height": 844}, "live",
+                                          {"live": dict(LIVE)}, touch=True)
+    try:
+        page.goto(BASE)
+        page.evaluate("(s) => localStorage.setItem('simulasi-trading-v2', JSON.stringify(s))",
+                      store_for(hist_multi))
+        page.reload()
+        page.wait_for_timeout(1500)
+        page.wait_for_function(
+            "() => window.__portfolioChart && window.__portfolioChart.xLabels && window.__portfolioChart.xLabels.length === 2",
+            timeout=10000)
+        m = page.evaluate("""() => {
+          const h = window.__portfolioChart;
+          const cv = document.createElement('canvas').getContext('2d');
+          cv.font = "10px 'IBM Plex Mono', monospace";
+          return {w0: cv.measureText(h.xLabels[0]).width,
+                  w1: cv.measureText(h.xLabels[1]).width,
+                  cw: h.w, labels: h.xLabels};
+        }""")
+        # Label kiri mulai x=62, label kanan berakhir x=cw-10: tidak
+        # menumpuk bila 62+w0 < (cw-10)-w1.
+        check("xaxis 390px: label bertanggal tidak menumpuk",
+              62 + m["w0"] < (m["cw"] - 10) - m["w1"], str(m))
+        check("0 error JS (xaxis 390px)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -3847,6 +3989,8 @@ def main():
                 test_portfolio_chart_time_axis(pw)
             if which in ("yaxisunit", "all"):
                 test_yaxis_single_unit(pw)
+            if which in ("xaxisdate", "all"):
+                test_xaxis_date_labels(pw)
             if which in ("emptyinput", "all"):
                 test_empty_input_stays_silent(pw)
             if which in ("menushort", "all"):
