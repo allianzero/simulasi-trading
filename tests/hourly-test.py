@@ -4064,116 +4064,98 @@ def test_new_profile_chart_seeded(pw):
     finally:
         browser.close()
 
+# Daftar grup tes — urutan SAMA seperti main() lama (tiap tes memakai
+# browser + localStorage baru, jadi urutan tidak saling memengaruhi,
+# tapi dipertahankan agar `python3 hourly-test.py <grup>` berperilaku
+# sama seperti sebelumnya).
+GROUPS = [
+    ("live", [test_live, test_mobile_live, test_lev_chips_narrow,
+              test_sell_max, test_dust_sell_zero_holdings,
+              test_tab_switch_clears_input, test_profile_name_escaped,
+              test_overlapping_confirms, test_id_number_format,
+              test_id_rp_prefix, test_enter_key]),
+    ("posoverlap", [test_position_row_no_overlap_narrow]),
+    ("posdesk", [test_position_row_no_overlap_desktop]),
+    ("marketwrap", [test_market_row_no_wrap_narrow]),
+    ("statbreak", [test_stat_value_no_break_narrow]),
+    ("chartlabels", [test_chart_labels_no_overlap_narrow]),
+    ("resetarmed", [test_reset_armed_profile_switch]),
+    ("profilectx", [test_profile_switch_clears_trade_context]),
+    ("microsell", [test_micro_sell_quick]),
+    ("offline", [test_offline, test_topbar_offline_narrow,
+                 test_spot_offline_blocked]),
+    ("binance", [test_binance]),
+    ("history", [test_offline_history]),
+    ("value", [test_spot_offline_frozen_value]),
+    ("race", [test_fetch_race]),
+    ("reload", [test_reload_offline_close]),
+    ("chart429", [test_chart_429]),
+    ("chartmark", [test_chart_mark_offline]),
+    ("partial", [test_partial_coingecko]),
+    ("stale", [test_stale_confirm, test_stale_confirm_tolerance,
+               test_offline_confirm_cancelled]),
+    ("panelmark", [test_panel_mark_offline]),
+    ("futerr", [test_fut_error_no_repeat_scroll]),
+    ("tradescap", [test_trades_cap]),
+    ("marketfocus", [test_market_row_no_focus_jump]),
+    ("focusrefresh", [test_focus_kept_on_refresh]),
+    ("coinctx", [test_coin_switch_clears_trade_context]),
+    ("pendinghide", [test_pending_cleared_on_hide]),
+    ("multitab", [test_multitab_sync, test_multitab_snapshot_keeps_context]),
+    ("welcomefocus", [test_welcome_no_autofocus_mobile,
+                      test_welcome_behind_overlay, test_double_enter_profile]),
+    ("quickzero", [test_quick_zero_feedback]),
+    ("invalidinput", [test_invalid_input]),
+    ("quickdot", [test_quick_dot_decimal]),
+    ("chartrefetch", [test_chart_refetch_10min,
+                      test_chart_refetch_fail_keeps_live_series]),
+    ("chartlabelorder", [test_chart_label_draw_order]),
+    ("charttime", [test_portfolio_chart_time_axis]),
+    ("yaxisunit", [test_yaxis_single_unit]),
+    ("xaxisdate", [test_xaxis_date_labels]),
+    ("newprofile", [test_new_profile_chart_seeded]),
+    ("emptyinput", [test_empty_input_stays_silent]),
+    ("menushort", [test_profile_menu_short_viewport]),
+    ("staleid", [test_stale_active_profile_id]),
+]
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
+    harness_broken = False
     try:
-        with sync_playwright() as pw:
-            if which in ("live", "all"):
-                test_live(pw)
-                test_mobile_live(pw)
-                test_lev_chips_narrow(pw)
-                test_sell_max(pw)
-                test_dust_sell_zero_holdings(pw)
-                test_tab_switch_clears_input(pw)
-                test_profile_name_escaped(pw)
-                test_overlapping_confirms(pw)
-                test_id_number_format(pw)
-                test_id_rp_prefix(pw)
-                test_enter_key(pw)
-            if which in ("posoverlap", "all"):
-                test_position_row_no_overlap_narrow(pw)
-            if which in ("posdesk", "all"):
-                test_position_row_no_overlap_desktop(pw)
-            if which in ("marketwrap", "all"):
-                test_market_row_no_wrap_narrow(pw)
-            if which in ("statbreak", "all"):
-                test_stat_value_no_break_narrow(pw)
-            if which in ("chartlabels", "all"):
-                test_chart_labels_no_overlap_narrow(pw)
-            if which in ("resetarmed", "all"):
-                test_reset_armed_profile_switch(pw)
-            if which in ("profilectx", "all"):
-                test_profile_switch_clears_trade_context(pw)
-            if which in ("microsell", "all"):
-                test_micro_sell_quick(pw)
-            if which in ("offline", "all"):
-                test_offline(pw)
-                test_topbar_offline_narrow(pw)
-                test_spot_offline_blocked(pw)
-            if which in ("binance", "all"):
-                test_binance(pw)
-            if which in ("history", "all"):
-                test_offline_history(pw)
-            if which in ("value", "all"):
-                test_spot_offline_frozen_value(pw)
-            if which in ("race", "all"):
-                test_fetch_race(pw)
-            if which in ("reload", "all"):
-                test_reload_offline_close(pw)
-            if which in ("chart429", "all"):
-                test_chart_429(pw)
-            if which in ("chartmark", "all"):
-                test_chart_mark_offline(pw)
-            if which in ("partial", "all"):
-                test_partial_coingecko(pw)
-            if which in ("stale", "all"):
-                test_stale_confirm(pw)
-                test_stale_confirm_tolerance(pw)
-                test_offline_confirm_cancelled(pw)
-            if which in ("panelmark", "all"):
-                test_panel_mark_offline(pw)
-            if which in ("futerr", "all"):
-                test_fut_error_no_repeat_scroll(pw)
-            if which in ("tradescap", "all"):
-                test_trades_cap(pw)
-            if which in ("marketfocus", "all"):
-                test_market_row_no_focus_jump(pw)
-            if which in ("focusrefresh", "all"):
-                test_focus_kept_on_refresh(pw)
-            if which in ("coinctx", "all"):
-                test_coin_switch_clears_trade_context(pw)
-            if which in ("pendinghide", "all"):
-                test_pending_cleared_on_hide(pw)
-            if which in ("multitab", "all"):
-                test_multitab_sync(pw)
-                test_multitab_snapshot_keeps_context(pw)
-            if which in ("welcomefocus", "all"):
-                test_welcome_no_autofocus_mobile(pw)
-                test_welcome_behind_overlay(pw)
-                test_double_enter_profile(pw)
-            if which in ("quickzero", "all"):
-                test_quick_zero_feedback(pw)
-            if which in ("invalidinput", "all"):
-                test_invalid_input(pw)
-            if which in ("quickdot", "all"):
-                test_quick_dot_decimal(pw)
-            if which in ("chartrefetch", "all"):
-                test_chart_refetch_10min(pw)
-                test_chart_refetch_fail_keeps_live_series(pw)
-            if which in ("chartlabelorder", "all"):
-                test_chart_label_draw_order(pw)
-            if which in ("charttime", "all"):
-                test_portfolio_chart_time_axis(pw)
-            if which in ("yaxisunit", "all"):
-                test_yaxis_single_unit(pw)
-            if which in ("xaxisdate", "all"):
-                test_xaxis_date_labels(pw)
-            if which in ("newprofile", "all"):
-                test_new_profile_chart_seeded(pw)
-            if which in ("emptyinput", "all"):
-                test_empty_input_stays_silent(pw)
-            if which in ("menushort", "all"):
-                test_profile_menu_short_viewport(pw)
-            if which in ("staleid", "all"):
-                test_stale_active_profile_id(pw)
+        try:
+            with sync_playwright() as pw:
+                for name, fns in GROUPS:
+                    if which not in (name, "all"):
+                        continue
+                    for fn in fns:
+                        try:
+                            fn(pw)
+                        except Exception as e:
+                            # Satu tes crash (mis. halaman Chromium mati /
+                            # TimeoutError tak tertangkap) TIDAK BOLEH
+                            # menggugurkan seluruh suite: catat sebagai
+                            # FAIL lalu lanjut ke grup berikut. Pernah:
+                            # suite penuh crash di tengah
+                            # (test_spot_offline_frozen_value, page
+                            # crash) sehingga grup-grup akhir tidak
+                            # pernah jalan dan tidak ada RINGKASAN.
+                            check("HARNESS: %s crash — suite lanjut ke grup berikut" % fn.__name__,
+                                  False, "%s: %s" % (type(e).__name__, str(e)[:200]))
+        except Exception as e:
+            # Playwright sendiri tidak bisa start (driver/browser
+            # rusak): tidak ada grup yang bisa jalan. Tetap cetak
+            # ringkasan di bawah supaya run tidak berakhir tanpa jejak.
+            harness_broken = True
+            print("HARNESS: Playwright tidak bisa start: %s: %s" % (type(e).__name__, str(e)[:200]))
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
     print(f"\n=== RINGKASAN: {len(results)-len(failed)}/{len(results)} lolos, {len(failed)} gagal ===")
     for r in failed:
         print("GAGAL:", r["name"], "—", r["detail"])
-    sys.exit(1 if failed else 0)
+    sys.exit(1 if (failed or harness_broken) else 0)
 
 if __name__ == "__main__":
     main()
