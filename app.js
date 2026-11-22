@@ -134,6 +134,20 @@ function loadStore() {
           p.futures = p.futures || [];
           if (typeof p.cash !== "number") p.cash = INITIAL_CASH;
         });
+        /* activeProfileId BASI (menunjuk profil yang tidak ada —
+           mis. localStorage disunting/rusak): jangan biarkan state
+           null sementara profil valid masih ada. Tanpa ini layar
+           sambutan tidak tampil (profiles.length > 0) DAN tombol
+           profil tersembunyi (state null) sehingga user jalan buntu
+           tanpa jalan masuk — kas tampil Rp5.000.000 default padahal
+           profilnya punya data. Pulih ke profil pertama; bila tidak
+           ada profil sama sekali, null (overlay sambutan tampil
+           seperti biasa). */
+        var hasActive = false;
+        s.profiles.forEach(function (p) { if (p.id === s.activeProfileId) hasActive = true; });
+        if (!hasActive) {
+          s.activeProfileId = s.profiles.length ? s.profiles[0].id : null;
+        }
         return s;
       }
     }
