@@ -15,8 +15,10 @@ Lalu buka http://localhost:8000 di browser.
 
 ## Fitur
 
-- **Harga live (IDR)** dari CoinGecko public API (tanpa key), auto-refresh tiap
-  30 detik + tombol Refresh. Menampilkan harga per koin dan perubahan 24 jam.
+- **Harga live (IDR)** dari CoinGecko public API (tanpa key), dengan
+  Binance Vision sebagai sumber cadangan bila CoinGecko gagal;
+  auto-refresh tiap 30 detik + tombol Refresh. Menampilkan harga per
+  koin dan perubahan 24 jam.
 - **Aset:** BTC, ETH, BNB, SOL, XRP, DOGE, ADA, TRX.
 - **Spot — beli & jual:** masukkan Rupiah (beli) atau jumlah koin (jual), ada
   tombol cepat 25% / 50% / 75% / Maks, pratinjau hitungan, dan konfirmasi 2
@@ -36,9 +38,12 @@ Lalu buka http://localhost:8000 di browser.
   setiap harga live diperbarui (tiap 30 detik). Saat ada posisi futures
   terbuka untuk koin itu, grafik menampilkan garis harga entry (hijau untuk
   Long, merah untuk Short), garis harga likuidasi (merah putus-putus), dan
-  garis harga mark saat ini (putus-putus). Bila CoinGecko tidak terjangkau,
-  grafik memakai deret contoh sintetis dan diberi label tegas
-  "Grafik contoh (offline)".
+  garis harga mark saat ini (putus-putus). Bila data 24 jam CoinGecko
+  tidak terjangkau (mis. rate limit) padahal harga live tersedia, grafik
+  memakai deret estimasi yang dijangkar pada harga live saat ini/terakhir
+  dan diberi label "Grafik estimasi"; deret contoh dari harga contoh +
+  label "Grafik contoh (offline)" hanya dipakai bila belum pernah ada
+  harga live sama sekali. Grafik live diambil ulang tiap 10 menit.
 - **Akun Guest:** sampai 5 profil, masing-masing dengan data simulasi sendiri
   (kas, kepemilikan spot, posisi futures, riwayat, grafik). Tanpa password,
   tanpa daftar, tanpa server.
@@ -100,16 +105,21 @@ lama tanpa profil) otomatis dipindahkan menjadi profil pertama bernama
 
 - Harga: `https://api.coingecko.com/api/v3/simple/price?...&vs_currencies=idr&include_24hr_change=true`
   (CoinGecko public API, gratis, tanpa key; ada batas rate API publik).
+  Bila CoinGecko gagal, harga diambil dari cadangan Binance Vision
+  (`data-api.binance.vision`, mirror publik tanpa key) — harga USDT per
+  koin × kurs USDT/IDR — sebelum jatuh ke harga contoh.
 - Grafik harga koin: `https://api.coingecko.com/api/v3/coins/{id}/market_chart?vs_currency=idr&days=1`
-  (gratis, tanpa key). Diambil sekali per koin lalu di-cache di memori
-  (tidak disimpan ke localStorage); harga terbaru ditambahkan ke grafik
-  setiap poll harga 30 detik. Bila fetch gagal, grafik memakai deret contoh
-  sintetis (random walk dari harga contoh) dan diberi label tegas
-  "Grafik contoh (offline)".
-- **Jika fetch gagal (offline / CoinGecko tidak terjangkau):** aplikasi memakai
-  harga contoh dan menampilkannya dengan label tegas
-  **"HARGA CONTOH (OFFLINE)"** — harga contoh tidak pernah disajikan
-  seolah-olah harga live.
+  (gratis, tanpa key). Di-cache di memori per koin (tidak disimpan ke
+  localStorage) dan diambil ulang tiap 10 menit bila live; harga terbaru
+  ditambahkan ke grafik setiap poll harga 30 detik. Bila fetch gagal
+  padahal harga live tersedia, grafik memakai deret estimasi yang
+  dijangkar pada harga live saat ini/terakhir (label "Grafik estimasi");
+  deret contoh sintetis dari harga contoh (label "Grafik contoh
+  (offline)") hanya dipakai bila belum pernah ada harga live sama sekali.
+- **Jika fetch gagal (offline / CoinGecko maupun Binance tidak
+  terjangkau):** aplikasi memakai harga contoh dan menampilkannya dengan
+  label tegas **"HARGA CONTOH (OFFLINE)"** — harga contoh tidak pernah
+  disajikan seolah-olah harga live.
 - Ini uang virtual: bukan trading sungguhan, tidak ada uang asli yang terlibat,
   dan hasil simulasi bukan saran investasi.
 
