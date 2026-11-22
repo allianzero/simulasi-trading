@@ -538,6 +538,24 @@ function priceMovedSignificantly(oldPrice, newPrice) {
 }
 
 function invalidateStaleConfirms() {
+  /* Harga tidak live lagi (offline — CoinGecko + Binance gagal,
+     harga contoh dipakai): batalkan SEMUA konfirmasi yang sedang
+     terbuka, apa pun pergerakan harganya. Tanpa ini, konfirmasi
+     yang dibuka saat live bisa dieksekusi saat badge sudah OFFLINE
+     bila harga contoh kebetulan sama dengan harga live (toleransi
+     0,1% di bawah tidak menangkapnya — pernah: TRX live Rp4.500
+     == contoh Rp4.500, posisi Long + beli spot tereksekusi saat
+     offline). Trade/futures hanya boleh saat harga live. */
+  if (!pricesLive) {
+    var hadTrade = window._pendingTrade && !$("confirmBox").hidden;
+    var hadFut = window._pendingFut && !$("futConfirmBox").hidden;
+    if (hadTrade || hadFut) {
+      hideConfirm();
+      hideFutConfirm();
+      showToast("Harga live tidak tersedia — konfirmasi dibatalkan. Tekan Refresh untuk mencoba lagi.", "error");
+    }
+    return;
+  }
   var price = currentPrice();
   if (price == null) return;
   if (window._pendingTrade && !$("confirmBox").hidden &&
