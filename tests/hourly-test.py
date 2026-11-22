@@ -1054,6 +1054,90 @@ def test_stale_confirm(pw):
     finally:
         browser.close()
 
+def test_stale_confirm_tolerance(pw):
+    """Regresi: geser harga MIKRO tidak boleh membatalkan konfirmasi.
+    Pernah: invalidateStaleConfirms membatalkan konfirmasi bila harga
+    berubah SAMA SEKALI (price !== pending.price) — geser Rp1.000 dari
+    Rp1,12 Miliar (0,00009%) sudah menutup konfirmasi yang sedang dibaca
+    user. Dengan fallback Binance (harga float last USDT x kurs) hampir
+    tiap refresh 30 detik harganya geser sedikit sehingga konfirmasi
+    praktis tidak pernah bertahan sampai user menekan "Ya". Kini ada
+    toleransi 0,1%: geser <= 0,1% membiarkan konfirmasi, geser besar
+    (> 0,1%) tetap membatalkan seperti test_stale_confirm."""
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('tradePrice').textContent.includes('1.120.000.000')",
+            timeout=10000)
+        # --- SPOT: konfirmasi @ Rp1.120.000.000 ---
+        page.fill("#amountInput", "1000000")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        # Geser mikro +Rp1.000 (0,00009%) -> konfirmasi TETAP
+        price_state["live"] = dict(LIVE)
+        price_state["live"]["bitcoin"] = {"idr": 1120001000, "idr_24h_change": 1.5}
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => document.getElementById('tradePrice').textContent.includes('1.120.001.000')",
+            timeout=10000)
+        page.wait_for_timeout(500)
+        check("stale-tol: konfirmasi spot TETAP setelah geser +Rp1.000 (0,00009%)",
+              page.is_visible("#confirmBox"), "confirmBox hilang karena geser mikro")
+        # Geser +0,05% -> konfirmasi TETAP
+        price_state["live"] = dict(LIVE)
+        price_state["live"]["bitcoin"] = {"idr": 1120560000, "idr_24h_change": 1.5}
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => document.getElementById('tradePrice').textContent.includes('1.120.560.000')",
+            timeout=10000)
+        page.wait_for_timeout(500)
+        check("stale-tol: konfirmasi spot TETAP setelah geser +0,05%",
+              page.is_visible("#confirmBox"), "confirmBox hilang karena geser 0,05%")
+        # Geser +2% -> konfirmasi HARUS batal (kontrol positif)
+        price_state["live"] = dict(LIVE)
+        price_state["live"]["bitcoin"] = {"idr": 1142400000, "idr_24h_change": 1.5}
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => document.getElementById('tradePrice').textContent.includes('1.142.400.000')",
+            timeout=10000)
+        page.wait_for_timeout(500)
+        check("stale-tol: konfirmasi spot BATAL setelah geser +2%",
+              page.is_hidden("#confirmBox"), "confirmBox masih tampil setelah geser 2%")
+        check("stale-tol: kas tetap Rp5.000.000, belum ada trade",
+              "5.000.000" in cash_text(page) and
+              "Belum ada transaksi" in page.text_content("#tradeHistory"),
+              cash_text(page))
+        # --- FUTURES: konfirmasi Long, geser mikro -> TETAP ---
+        page.fill("#futMarginInput", "100000")
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        price_state["live"] = dict(LIVE)
+        price_state["live"]["bitcoin"] = {"idr": 1142401000, "idr_24h_change": 1.5}
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => document.getElementById('futPrice').textContent.includes('1.142.401.000')",
+            timeout=10000)
+        page.wait_for_timeout(500)
+        check("stale-tol: konfirmasi futures TETAP setelah geser +Rp1.000",
+              page.is_visible("#futConfirmBox"), "futConfirmBox hilang karena geser mikro")
+        # Eksekusi di harga konfirmasi — entry = harga saat konfirmasi
+        # dibuat (Rp1.142.400.000), BUKAN mark baru Rp1.142.401.000;
+        # PnL awal +Rp1 (0,00%) karena mark geser Rp1.000 setelah buka.
+        page.click("#futConfirmYes")
+        page.wait_for_timeout(500)
+        pos = page.text_content("#futPositions")
+        check("stale-tol: posisi Long entry harga konfirmasi Rp1.142.400.000 "
+              "(mark baru Rp1.142.401.000), PnL +Rp1",
+              "entry Rp" in pos and "1.142.400.000" in pos and
+              "mark Rp" in pos and "1.142.401.000" in pos and "PnL +Rp" in pos,
+              pos.replace("\n", " ")[:200])
+        check("0 error JS (stale-tol)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_profile_name_escaped(pw):
     """Regresi: nama profil berisi HTML harus tampil sebagai teks biasa.
     Pernah: nama "<b>TEST</b>" tampil tebal dan "<img src=x>" jadi elemen
@@ -2978,6 +3062,7 @@ def main():
                 test_partial_coingecko(pw)
             if which in ("stale", "all"):
                 test_stale_confirm(pw)
+                test_stale_confirm_tolerance(pw)
             if which in ("panelmark", "all"):
                 test_panel_mark_offline(pw)
             if which in ("futerr", "all"):
