@@ -1939,6 +1939,73 @@ def test_market_row_no_focus_jump(pw):
     finally:
         browser.close()
 
+def test_focus_kept_on_refresh(pw):
+    """Regresi: fokus keyboard TIDAK hilang saat daftar dibangun ulang.
+    Pernah: renderMarket()/renderPositions()/renderProfileUI() memakai
+    innerHTML = "" lalu membangun ulang semua baris di tiap renderAll()
+    (tiap refresh harga 30 detik) — fokus di baris pasar / tombol Tutup
+    posisi / item profil jatuh ke <body>, pengguna keyboard kehilangan
+    posisinya tiap 30 detik. Elemen statis (amountInput) tidak kena
+    karena tidak dibangun ulang."""
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", {"live": dict(LIVE)})
+    try:
+        enter_guest(page)
+        page.wait_for_function("() => document.querySelectorAll('.market-row').length === 8", timeout=10000)
+        # 1. Baris pasar ETH tetap fokus setelah renderAll()
+        page.evaluate("() => document.querySelectorAll('.market-row')[1].focus()")
+        check("focus-refresh: fokus awal di baris ETH",
+              page.evaluate("() => document.activeElement && document.activeElement.textContent.includes('Ethereum')"))
+        page.evaluate("() => renderAll()")
+        check("focus-refresh: baris ETH tetap fokus setelah renderAll()",
+              page.evaluate("() => { const a = document.activeElement; return !!(a && a.classList.contains('market-row') && a.textContent.includes('Ethereum')); }"),
+              page.evaluate("() => document.activeElement && document.activeElement.tagName"))
+        # 2. Refresh harga sungguhan (fetchPrices) juga tidak menghilangkan fokus
+        page.evaluate("() => document.querySelectorAll('.market-row')[3].focus()")
+        page.evaluate("() => fetchPrices()")
+        page.wait_for_timeout(1500)
+        check("focus-refresh: baris SOL tetap fokus setelah fetchPrices()",
+              page.evaluate("() => { const a = document.activeElement; return !!(a && a.classList.contains('market-row') && a.textContent.includes('Solana')); }"),
+              page.evaluate("() => document.activeElement && document.activeElement.tagName"))
+        # 3. Tombol Tutup posisi tetap fokus setelah renderAll()
+        page.fill("#futMarginInput", "100000")
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        page.click("#futConfirmYes")
+        page.wait_for_function("() => document.querySelectorAll('#futPositions .position-row').length === 1", timeout=5000)
+        page.evaluate("() => document.querySelector('#futPositions [data-pos-id]').focus()")
+        page.evaluate("() => renderAll()")
+        check("focus-refresh: tombol Tutup tetap fokus setelah renderAll()",
+              page.evaluate("() => { const a = document.activeElement; return !!(a && a.textContent.trim() === 'Tutup'); }"),
+              page.evaluate("() => document.activeElement && document.activeElement.tagName"))
+        # 4. Posisi yang ditutup TIDAK memindahkan fokus ke tombol Tutup lain
+        page.fill("#futMarginInput", "100000")
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        page.click("#futConfirmYes")
+        page.wait_for_function("() => document.querySelectorAll('#futPositions .position-row').length === 2", timeout=5000)
+        page.evaluate("() => document.querySelectorAll('#futPositions [data-pos-id]')[0].focus()")
+        page.evaluate("() => closeFutures(window.__futuresPnl[0].id, 'manual')")
+        page.wait_for_function("() => document.querySelectorAll('#futPositions .position-row').length === 1", timeout=5000)
+        check("focus-refresh: tutup posisi sendiri TIDAK memindahkan fokus ke Tutup posisi lain",
+              page.evaluate("() => { const a = document.activeElement; return !(a && a.textContent && a.textContent.trim() === 'Tutup'); }"),
+              page.evaluate("() => document.activeElement && document.activeElement.tagName"))
+        # 5. Item profil di menu tetap fokus setelah renderAll()
+        page.click("#profileBtn")
+        page.wait_for_selector("#profileMenu:not([hidden])", timeout=5000)
+        page.evaluate("() => document.querySelector('.profile-item').focus()")
+        page.evaluate("() => renderAll()")
+        check("focus-refresh: item profil tetap fokus setelah renderAll()",
+              page.evaluate("() => { const a = document.activeElement; return !!(a && a.classList.contains('profile-item')); }"),
+              page.evaluate("() => document.activeElement && document.activeElement.tagName"))
+        # 6. Kontrol: amountInput (elemen statis) tetap fokus
+        page.evaluate("() => document.getElementById('amountInput').focus()")
+        page.evaluate("() => renderAll()")
+        check("focus-refresh: amountInput tetap fokus setelah renderAll()",
+              page.evaluate("document.activeElement && document.activeElement.id") == "amountInput")
+        check("0 error JS (focus-refresh)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_welcome_no_autofocus_mobile(pw):
     """Regresi: layar sambutan TIDAK auto-focus ke input nama di HP.
     Pernah: setTimeout(...guestNameInput.focus(), 100) di semua
@@ -2747,6 +2814,8 @@ def main():
                 test_trades_cap(pw)
             if which in ("marketfocus", "all"):
                 test_market_row_no_focus_jump(pw)
+            if which in ("focusrefresh", "all"):
+                test_focus_kept_on_refresh(pw)
             if which in ("coinctx", "all"):
                 test_coin_switch_clears_trade_context(pw)
             if which in ("pendinghide", "all"):
