@@ -3274,9 +3274,13 @@ def test_chart_refetch_fail_keeps_live_series(pw):
         page.evaluate(
             "() => { window.priceHistory.BTC.fetchedAt = Date.now() - 11*60*1000; }")
         page.click("#refreshBtn")
-        page.wait_for_function(
-            "() => window.__priceChart && window.__priceChart.loading === true",
-            timeout=5000)
+        # Tunggu refetch ke-2 terjadi (bukan state transient
+        # loading===true: mock 429 kembali instan sehingga polling
+        # bisa melewatkan jendela loading — flake run 55/56 yang
+        # membuat suite crash sebelum grup-grup akhir jalan).
+        _deadline = _time.time() + 10
+        while chart_hits["n"] < 2 and _time.time() < _deadline:
+            page.wait_for_timeout(100)
         page.wait_for_function(
             "() => window.__priceChart && window.__priceChart.loading === false",
             timeout=10000)
@@ -3896,6 +3900,170 @@ def test_xaxis_date_labels(pw):
     finally:
         browser.close()
 
+
+def _wait_chart_points(page, timeout=5000):
+    # wait_for_function melempar TimeoutError; ubah jadi boolean agar
+    # tes mencatat FAIL dan lanjut, bukan crash di tengah jalan.
+    try:
+        page.wait_for_function(
+            "() => window.__portfolioChart && window.__portfolioChart.points.length >= 1",
+            timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+def test_new_profile_chart_seeded(pw):
+    # Bug (run 56): profil baru riwayat grafik portofolio KOSONG sampai
+    # refresh harga pertama. Fetch harga di boot jalan sebelum state ada
+    # (layar sambutan), jadi snapshotPortfolio() di applyPrices tidak
+    # merekam apa-apa; createGuestProfile/switchProfile juga tidak
+    # snapshot. Akibatnya Guest baru melihat "Belum ada data. Grafik
+    # terisi setelah harga diperbarui." sampai 30 detik (interval) atau
+    # tombol Refresh ditekan. Perbaikan: snapshotPortfolio() dipanggil
+    # saat profil menjadi aktif (buat + ganti) — guard !pricesLive di
+    # dalamnya mencegah snapshot dari harga contoh offline.
+    # Tes: (1) harga live SUDAH tampil SEBELUM masuk Guest (fetch boot
+    # sudah selesai saat state null) -> masuk Guest -> TANPA klik
+    # Refresh dan TANPA menunggu 30 detik, grafik portofolio sudah
+    # punya titik Rp5.000.000; (2) profil kedua dari menu juga langsung
+    # punya titik; (3) ganti ke profil yang riwayatnya kosong (dibuat
+    # saat offline) langsung terisi begitu harga live; (4) offline:
+    # profil baru TIDAK boleh snapshot dari harga contoh.
+    import json
+    pts = [[int(__import__("time").time() * 1000) - (96 - i) * 900000,
+            1100000000 + i * 200000] for i in range(97)]
+
+    def cg(route):
+        url = route.request.url
+        if "simple/price" in url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps({"prices": pts}))
+        else:
+            route.abort()
+
+    def store_hist():
+        s = json.loads(page.evaluate(
+            "() => localStorage.getItem('simulasi-trading-v2')"))
+        return s["profiles"]
+
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        page.goto(BASE)
+        page.wait_for_selector("#welcomeOverlay:not([hidden])", timeout=10000)
+        # Pastikan fetch boot SUDAH selesai saat state masih null:
+        # badge HARGA LIVE = applyPrices sudah jalan tanpa snapshot.
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        check("newprofile: badge HARGA LIVE sebelum masuk Guest",
+              page.text_content("#priceBadgeText") == "HARGA LIVE")
+        page.click("#guestEnterBtn")
+        page.wait_for_function("() => document.getElementById('welcomeOverlay').hidden", timeout=5000)
+        # TANPA klik Refresh, TANPA menunggu 30 detik: grafik harus
+        # sudah punya titik (kontrol negatif: kode lama timeout di sini).
+        check("newprofile: grafik profil baru punya titik tanpa Refresh",
+              _wait_chart_points(page))
+        h1 = store_hist()[0]["history"]
+        check("newprofile: riwayat profil baru tersimpan",
+              len(h1) >= 1, str(h1))
+        check("newprofile: titik pertama profil baru = Rp5.000.000",
+              h1 and h1[0]["v"] == 5000000, str(h1[:1]))
+
+        # Profil kedua dari menu: langsung terisi juga.
+        page.click("#profileBtn")
+        page.wait_for_function("() => !document.getElementById('profileMenu').hidden", timeout=5000)
+        page.fill("#newProfileName", "Kedua")
+        page.click("#createProfileBtn")
+        page.wait_for_function("() => document.getElementById('profileName').textContent === 'Kedua'", timeout=5000)
+        check("newprofile: grafik profil kedua langsung punya titik",
+              _wait_chart_points(page))
+        profs = store_hist()
+        h2 = [p for p in profs if p["name"] == "Kedua"][0]["history"]
+        check("newprofile: riwayat profil kedua tersimpan",
+              len(h2) >= 1, str(h2))
+        check("newprofile: titik pertama profil kedua = Rp5.000.000",
+              h2 and h2[0]["v"] == 5000000, str(h2[:1]))
+        check("0 error JS (newprofile desktop)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
+    # Ganti profil ke profil yang riwayatnya kosong (dibuat saat offline):
+    # begitu jadi aktif dan harga live, snapshot langsung terisi.
+    import time
+    now = int(time.time() * 1000)
+    seed = {"version": 2, "activeProfileId": "p1",
+            "profiles": [
+                {"id": "p1", "name": "Satu", "createdAt": 1, "cash": 5000000,
+                 "holdings": {}, "trades": [],
+                 "history": [{"t": now - 3600000, "v": 5000000}], "futures": []},
+                {"id": "p2", "name": "Kosong", "createdAt": 1, "cash": 5000000,
+                 "holdings": {}, "trades": [], "history": [], "futures": []}]}
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.evaluate("(s) => localStorage.setItem('simulasi-trading-v2', JSON.stringify(s))", seed)
+        page.reload()
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        page.click("#profileBtn")
+        page.wait_for_function("() => !document.getElementById('profileMenu').hidden", timeout=5000)
+        page.evaluate("() => document.querySelectorAll('#profileList .profile-item')[1].click()")
+        page.wait_for_function("() => document.getElementById('profileName').textContent === 'Kosong'", timeout=5000)
+        check("newprofile: ganti ke profil riwayat-kosong langsung terisi",
+              _wait_chart_points(page))
+        profs = store_hist()
+        h3 = [p for p in profs if p["name"] == "Kosong"][0]["history"]
+        check("newprofile: riwayat profil kosong tersimpan setelah ganti",
+              len(h3) >= 1, str(h3))
+        check("newprofile: titik profil kosong setelah ganti = Rp5.000.000",
+              h3 and h3[0]["v"] == 5000000, str(h3[:1]))
+        check("0 error JS (newprofile ganti profil)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
+    # Offline: profil baru TIDAK boleh snapshot dari harga contoh.
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "offline",
+                                          {"live": dict(LIVE)})
+    try:
+        page.goto(BASE)
+        page.wait_for_selector("#welcomeOverlay:not([hidden])", timeout=10000)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA CONTOH (OFFLINE)'",
+            timeout=10000)
+        page.click("#guestEnterBtn")
+        page.wait_for_function("() => document.getElementById('welcomeOverlay').hidden", timeout=5000)
+        page.wait_for_timeout(1500)
+        h4 = store_hist()[0]["history"]
+        check("newprofile offline: profil baru tidak snapshot dari harga contoh",
+              len(h4) == 0, str(h4))
+        check("newprofile offline: grafik tampil 'Belum ada data'",
+              page.evaluate("() => window.__chartLabels === null"))
+        check("0 error JS (newprofile offline)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -3991,6 +4159,8 @@ def main():
                 test_yaxis_single_unit(pw)
             if which in ("xaxisdate", "all"):
                 test_xaxis_date_labels(pw)
+            if which in ("newprofile", "all"):
+                test_new_profile_chart_seeded(pw)
             if which in ("emptyinput", "all"):
                 test_empty_input_stays_silent(pw)
             if which in ("menushort", "all"):
