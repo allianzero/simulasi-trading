@@ -787,9 +787,21 @@ function drawChart() {
   min -= pad; max += pad;
 
   var left = 62, right = w - 10, top = 14, bottom = h - 26;
+  /* Sumbu X berbasis WAKTU, bukan urutan titik: titik dipetakan dari
+     stempel waktunya (t pertama -> kiri, t terakhir -> kanan).
+     Sebelumnya x(i) memakai indeks — lompatan nilai setelah jeda
+     panjang tanpa snapshot (mis. offline berjam-jam lalu harga live
+     kembali) digambar dalam SATU langkah indeks (~2px dari 240 titik)
+     sehingga tampak seperti dinding tegak di ujung kanan, padahal
+     nilainya berubah selama berjam-jam. Dengan sumbu waktu, garis
+     membentang selebar jeda sebenarnya. Bila semua stempel sama
+     (atau hanya 1 titik), kembali ke pemetaan indeks seperti dulu. */
+  var tFirst = hist[0].t, tLast = hist[hist.length - 1].t;
+  var timeAxis = hist.length > 1 && tLast > tFirst;
   function x(i) {
-    return hist.length === 1 ? (left + right) / 2
-      : left + (i / (hist.length - 1)) * (right - left);
+    if (hist.length === 1) return (left + right) / 2;
+    if (timeAxis) return left + ((hist[i].t - tFirst) / (tLast - tFirst)) * (right - left);
+    return left + (i / (hist.length - 1)) * (right - left);
   }
   function y(v) { return bottom - ((v - min) / (max - min)) * (bottom - top); }
 
@@ -910,6 +922,11 @@ function drawChart() {
   window.__chartLabels = {
     pill: { x0: left + 4, x1: left + 4 + tw + 12, y0: pillTop, y1: pillTop + 15 },
     last: { x0: right - 2 - lastTw, x1: right - 2, y0: lastBase - 12, y1: lastBase }
+  };
+  /* Hook koordinat titik grafik portofolio (bukan bagian UI). */
+  window.__portfolioChart = {
+    points: hist.map(function (p, i) { return { t: p.t, v: p.v, x: x(i), y: y(p.v) }; }),
+    w: w, h: h
   };
 }
 
