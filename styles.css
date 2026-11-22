@@ -469,6 +469,15 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 }
 .lev-chip:hover { border-color: var(--accent); }
 .lev-chip.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+/* Layar sangat sempit (<=360px): 5 chip leverage tidak muat berdampingan
+   dengan lebar alaminya (~298px, sementara lebar konten kartu ~252px di
+   320px) sehingga chip 100x terpotong 12px di luar layar dan tidak bisa
+   diklik penuh — overflow-x:hidden di body menyembunyikan sisanya.
+   Di layar kecil ini chip berbagi lebar baris secara merata (tetap
+   >=44px, target sentuh terjaga) supaya semuanya muat di dalam kartu. */
+@media (max-width: 360px) {
+  .lev-chip { flex: 1 1 0; min-width: 0; padding-left: 4px; padding-right: 4px; }
+}
 
 .quick-row {
   display: flex;
