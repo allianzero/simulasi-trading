@@ -125,15 +125,30 @@ function loadStore() {
     if (raw) {
       var s = JSON.parse(raw);
       if (s && Array.isArray(s.profiles)) {
+        var trimmedTrades = false;
         s.profiles.forEach(function (p) {
           p.holdings = p.holdings || {};
           p.trades = p.trades || [];
           /* Pangkas riwayat lama yang tersimpan sebelum batas ini ada. */
-          if (p.trades.length > MAX_TRADES) p.trades = p.trades.slice(-MAX_TRADES);
+          if (p.trades.length > MAX_TRADES) {
+            p.trades = p.trades.slice(-MAX_TRADES);
+            trimmedTrades = true;
+          }
           p.history = p.history || [];
           p.futures = p.futures || [];
           if (typeof p.cash !== "number") p.cash = INITIAL_CASH;
         });
+        /* Pemangkasan HARUS tersimpan saat load: tanpa ini batas 200
+           hanya hidup di memori dan localStorage tetap menyimpan
+           250+ entri sampai ada saveStore() berikutnya. Dulu itu
+           tertutup secara kebetulan — snapshot pertama pasca-reload
+           selalu append (riwayat masih kosong) lalu saveStore();
+           sejak profil baru langsung punya titik grafik, snapshot
+           pasca-reload bisa no-op (titik segar, nilai sama) sehingga
+           pemangkasan tidak pernah tersimpan. */
+        if (trimmedTrades) {
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch (e) {}
+        }
         /* activeProfileId BASI (menunjuk profil yang tidak ada —
            mis. localStorage disunting/rusak): jangan biarkan state
            null sementara profil valid masih ada. Tanpa ini layar
@@ -799,6 +814,11 @@ function drawChart() {
   var hist = state.history;
   if (hist.length === 0) {
     window.__chartLabels = null;
+    /* Hook grafik portofolio juga direset: tanpa ini, ganti ke profil
+       ber-riwayat kosong membiarkan __portfolioChart berisi titik
+       profil sebelumnya (basi) padahal kanvas menampilkan
+       "Belum ada data." — hook harus mencerminkan yang digambar. */
+    window.__portfolioChart = null;
     ctx.fillStyle = "#848e9c";
     ctx.font = "13px Inter, sans-serif";
     ctx.textAlign = "center";
@@ -2211,6 +2231,14 @@ function switchProfile(id) {
   store.activeProfileId = p.id;
   state = p;
   saveStore();
+  /* Profil yang jadi aktif langsung punya titik grafik portofolio
+     bila harga live sudah ada (lihat createGuestProfile): tanpa ini
+     profil ber-riwayat kosong — mis. dibuat saat offline — tetap
+     "Belum ada data" sampai refresh harga berikutnya. Guard
+     !pricesLive di snapshotPortfolio() mencegah snapshot dari harga
+     contoh; bila riwayat sudah ada dan nilainya belum berubah dalam
+     60 detik, pemanggilan ini no-op. */
+  snapshotPortfolio();
   $("profileMenu").hidden = true;
   $("profileBtn").setAttribute("aria-expanded", "false");
   hideConfirm();
@@ -2235,6 +2263,15 @@ function createGuestProfile(name) {
   store.activeProfileId = p.id;
   state = p;
   saveStore();
+  /* Profil baru langsung punya titik grafik portofolio bila harga
+     live sudah dimuat: fetch harga di boot jalan sebelum state ada
+     (layar sambutan), jadi snapshotPortfolio() di applyPrices tidak
+     merekam apa-apa dan grafik menampilkan "Belum ada data" sampai
+     refresh harga berikutnya (30 detik) atau tombol Refresh. Guard
+     !pricesLive di snapshotPortfolio() mencegah snapshot dari harga
+     contoh offline; bila fetch masih berjalan, applyPrices yang
+     menyusul tetap snapshot karena state kini sudah ada. */
+  snapshotPortfolio();
   return p;
 }
 
