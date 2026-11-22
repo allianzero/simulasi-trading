@@ -523,20 +523,33 @@ async function fetchPrices() {
    Long langsung −18,18% begitu dibuka karena entry memakai harga
    lama. Dipanggil dari applyPrices() tiap harga diperbarui; bila
    harga TIDAK berubah, konfirmasi dibiarkan (tidak mengganggu
-   user yang konfirmasinya masih berlaku). */
+   user yang konfirmasinya masih berlaku).
+   TOLERANSI 0,1%: perubahan yang lebih kecil dari itu TIDAK
+   membatalkan konfirmasi. Tanpa toleransi, SETIAP geser harga —
+   bahkan Rp1.000 dari Rp1,12 Miliar (0,00009%) — menutup konfirmasi
+   yang sedang dibaca user; dengan fallback Binance (harga float
+   dari last USDT x kurs) hampir tiap refresh 30 detik harganya
+   geser sedikit sehingga konfirmasi praktis tidak pernah bertahan
+   sampai user sempat menekan "Ya". Geser <= 0,1% mengubah harga
+   eksekusi paling banyak 0,1% — jauh dari kasus asli di atas. */
+function priceMovedSignificantly(oldPrice, newPrice) {
+  if (!oldPrice || !newPrice) return true;
+  return Math.abs(newPrice - oldPrice) / oldPrice > 0.001;
+}
+
 function invalidateStaleConfirms() {
   var price = currentPrice();
   if (price == null) return;
   if (window._pendingTrade && !$("confirmBox").hidden &&
       window._pendingTrade.symbol === selectedSymbol &&
-      price !== window._pendingTrade.price) {
+      priceMovedSignificantly(window._pendingTrade.price, price)) {
     window._pendingTrade = null;
     hideConfirm();
     showToast("Harga " + selectedSymbol + " berubah — silakan periksa dan konfirmasi ulang.", "error");
   }
   if (window._pendingFut && !$("futConfirmBox").hidden &&
       window._pendingFut.symbol === selectedSymbol &&
-      price !== window._pendingFut.entry) {
+      priceMovedSignificantly(window._pendingFut.entry, price)) {
     window._pendingFut = null;
     hideFutConfirm();
     showToast("Harga " + selectedSymbol + " berubah — silakan periksa dan konfirmasi ulang.", "error");
