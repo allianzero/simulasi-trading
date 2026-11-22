@@ -712,7 +712,12 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.25s ease, transform 0.25s ease;
-  z-index: 100;
+  /* Di atas overlay sambutan (z-index 200): panel trade di belakang
+     overlay tetap bisa difokus lewat keyboard, dan toast dari aksi
+     itu (mis. validasi Beli/Jual) harus terlihat, bukan tertutup
+     overlay. Pernah: toast z-index 100 tidak terlihat saat overlay
+     tampil. Menu profil (50) dan topbar (30) tetap di bawah toast. */
+  z-index: 300;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast-success { border-left-color: var(--green); }
