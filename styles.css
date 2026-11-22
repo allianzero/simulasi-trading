@@ -661,6 +661,12 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
   .coin-symbol { font-size: 0.72rem; white-space: nowrap; }
   .coin-price { min-width: 0; }
   .coin-price .price { font-size: 0.8rem; }
+  /* Stat portofolio di layar sangat sempit: grid 2 kolom menyisakan
+     ~123px per stat di 320px, sementara "Rp 5.000.000" 1.2rem butuh
+     ~139px — overflow-wrap: break-word memecah angka di tengah
+     ("Rp 5.000.0" / "00") dan "Rp 0 (0,00%)" jadi 2 baris. Satu
+     kolom membuat tiap nilai selebar kartu (~262px di 320px). */
+  .portfolio-grid { grid-template-columns: 1fr; }
 }
 /* Label kecil penanda PnL beku: dihitung dari harga live terakhir,
    bukan dari harga contoh offline. */
