@@ -3343,6 +3343,75 @@ def test_profile_menu_short_viewport(pw):
         finally:
             browser.close()
 
+def test_stale_active_profile_id(pw):
+    """activeProfileId basi (menunjuk profil yang tidak ada — mis.
+    localStorage disunting/rusak) tidak boleh membuat aplikasi jalan
+    buntu. Pernah: profil valid 'Bray' (kas Rp4.000.000 + holding)
+    tersimpan tapi activeProfileId 'p-hilang' -> state null, overlay
+    sambutan tetap sembunyi (profiles.length > 0) DAN tombol profil
+    tersembunyi, kas tampil Rp5.000.000 default, tidak ada jalan
+    masuk ke profil mana pun. Harus: pulih ke profil pertama yang
+    ada, datanya utuh, trade jalan."""
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        if "simple/price" in route.request.url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in route.request.url:
+            mock_chart(route)
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        page.goto(BASE)
+        page.evaluate("""() => {
+          localStorage.setItem('simulasi-trading-v2', JSON.stringify({
+            version: 2, activeProfileId: 'p-hilang',
+            profiles: [{ id: 'p-nyata', name: 'Bray', createdAt: 1,
+              cash: 4000000, holdings: { BTC: { amount: 0.0005, avgPrice: 1000000000 } },
+              trades: [], history: [], futures: [] }]
+          }));
+        }""")
+        page.reload()
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        page.wait_for_timeout(500)
+        check("stale-id: tombol profil tampil (ada jalan masuk)",
+              page.is_visible("#profileWrap"),
+              "profileWrap hidden=%s overlay hidden=%s" % (
+                  page.evaluate("() => document.getElementById('profileWrap').hidden"),
+                  page.evaluate("() => document.getElementById('welcomeOverlay').hidden")))
+        check("stale-id: profil valid 'Bray' dipakai",
+              "Bray" in page.text_content("#profileName"),
+              page.text_content("#profileName"))
+        check("stale-id: kas profil Bray Rp4.000.000 tampil",
+              "4.000.000" in cash_text(page), cash_text(page))
+        check("stale-id: holding BTC profil Bray tampil",
+              "BTC" in page.text_content("#holdingsList"),
+              page.text_content("#holdingsList")[:120])
+        page.fill("#amountInput", "100000")
+        page.wait_for_selector("#previewBox:not([hidden])", timeout=5000)
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        page.click("#confirmYes")
+        page.wait_for_function("() => document.getElementById('cashBalance').textContent.includes('3.900.000')", timeout=5000)
+        check("stale-id: trade jalan setelah pulih (kas Rp3.900.000)",
+              "3.900.000" in cash_text(page), cash_text(page))
+        check("0 error JS (stale-id)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -3431,6 +3500,8 @@ def main():
                 test_empty_input_stays_silent(pw)
             if which in ("menushort", "all"):
                 test_profile_menu_short_viewport(pw)
+            if which in ("staleid", "all"):
+                test_stale_active_profile_id(pw)
     finally:
         srv.shutdown()
     failed = [r for r in results if not r["ok"]]
