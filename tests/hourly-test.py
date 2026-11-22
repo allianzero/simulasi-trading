@@ -3150,6 +3150,45 @@ def test_stat_value_no_break_narrow(pw):
         finally:
             browser.close()
 
+def test_chart_labels_no_overlap_narrow(pw):
+    # Label "Modal awal" grafik portofolio menumpuk label nilai terakhir
+    # bila nilainya ~ modal awal (profil baru: baseY == ly) di kanvas
+    # sempit — di 320px pill x 66–191 vs label x 163–250 (tumpang 28px).
+    # Perbaikan: drawChart menggeser label yang bertabrakan (label nilai
+    # ke bawah titik, atau pill ke bawah garis). Hook window.__chartLabels
+    # memuat rect kedua label yang benar-benar digambar.
+    price_state = {"live": dict(LIVE)}
+    labels_js = """() => {
+      const h = window.__chartLabels;
+      if (!h) return null;
+      const cv = document.getElementById('chart');
+      return {pill: h.pill, last: h.last, w: cv.clientWidth, h: cv.clientHeight};
+    }"""
+    for w in (320, 360, 390, 420):
+        browser, ctx, page, errors = new_page(pw, {"width": w, "height": 844}, "live", price_state, touch=True)
+        try:
+            enter_guest(page)
+            page.click("#refreshBtn")
+            try:
+                page.wait_for_function("() => window.__chartLabels", timeout=10000)
+            except Exception:
+                pass  # hook tidak muncul -> cek di bawah GAGAL, bukan crash
+            m = page.evaluate(labels_js)
+            check(f"chartlabel {w}px: hook label grafik terbaca", m is not None, str(m))
+            if m:
+                p, l = m["pill"], m["last"]
+                overlap = (min(p["x1"], l["x1"]) - max(p["x0"], l["x0"]) > 0
+                           and min(p["y1"], l["y1"]) - max(p["y0"], l["y0"]) > 0)
+                check(f"chartlabel {w}px: pill 'Modal awal' tidak menumpuk label nilai",
+                      not overlap, str(m))
+                check(f"chartlabel {w}px: kedua label di dalam kanvas",
+                      p["x0"] >= 0 and p["x1"] <= m["w"] + 1 and l["x0"] >= 0 and l["x1"] <= m["w"] + 1
+                      and p["y0"] >= 0 and p["y1"] <= m["h"] + 1 and l["y0"] >= 0 and l["y1"] <= m["h"] + 1,
+                      str(m))
+            check(f"0 error JS (chartlabel {w}px)", len(errors) == 0, "; ".join(errors[:3]))
+        finally:
+            browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -3172,6 +3211,8 @@ def main():
                 test_market_row_no_wrap_narrow(pw)
             if which in ("statbreak", "all"):
                 test_stat_value_no_break_narrow(pw)
+            if which in ("chartlabels", "all"):
+                test_chart_labels_no_overlap_narrow(pw)
             if which in ("resetarmed", "all"):
                 test_reset_armed_profile_switch(pw)
             if which in ("profilectx", "all"):
