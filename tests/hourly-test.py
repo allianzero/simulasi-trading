@@ -3208,6 +3208,94 @@ def test_chart_refetch_10min(pw):
     finally:
         browser.close()
 
+def test_chart_refetch_fail_keeps_live_series(pw):
+    """Regresi: refetch grafik 24 jam yang GAGAL tidak boleh membuang
+    deret live yang sudah ada.
+    Pernah: catch di fetchPriceChart() selalu menimpa h.points dengan
+    syntheticSeries() — refetch berkala tiap 10 menit yang kena 429 /
+    timeout mengganti seluruh deret asli CoinGecko (24 jam data nyata)
+    dengan random walk sintetis berjangkar harga live. Kini: bila
+    sudah ada deret live (>10 titik), deret itu dipertahankan,
+    h.live tetap true, dan fetch dijadwalkan ulang setelah jendela
+    10 menit. Deret sintetis hanya bila belum ada deret live."""
+    import time as _time
+    price_state = {"live": dict(LIVE)}
+    chart_hits = {"n": 0}
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        url = route.request.url
+        if "simple/price" in url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(price_state["live"]))
+        elif "market_chart" in url:
+            chart_hits["n"] += 1
+            if chart_hits["n"] >= 2:
+                route.fulfill(status=429, content_type="application/json",
+                              body=json.dumps({"status": {"error_code": 429}}))
+                return
+            now = int(_time.time() * 1000)
+            pts = [[now - (96 - i) * 900000, 1100000000 + i * 200000]
+                   for i in range(97)]
+            pts[50][1] = 999000000  # sidik jari: lembah khas deret asli
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps({"prices": pts}))
+        else:
+            route.abort()
+
+    def bn(route):
+        route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", bn)
+    page.route("**/api.binance.com/**", bn)
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        page.wait_for_function(
+            "() => window.__priceChart && window.__priceChart.live",
+            timeout=10000)
+        p50 = page.evaluate("() => window.priceHistory.BTC.points[50].v")
+        check("chart-refetch-fail: deret live awal punya sidik jari (titik ke-51 Rp999.000.000)",
+              abs(p50 - 999000000) < 1, f"points[50]={p50}")
+        # Tuakan grafik jadi 11 menit lalu, lalu picu refetch yang akan 429.
+        page.evaluate(
+            "() => { window.priceHistory.BTC.fetchedAt = Date.now() - 11*60*1000; }")
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => window.__priceChart && window.__priceChart.loading === true",
+            timeout=5000)
+        page.wait_for_function(
+            "() => window.__priceChart && window.__priceChart.loading === false",
+            timeout=10000)
+        check("chart-refetch-fail: refetch gagal terjadi (market_chart hit ke-2)",
+              chart_hits["n"] >= 2, f"hits={chart_hits['n']}")
+        live_after = page.evaluate("() => window.__priceChart.live")
+        check("chart-refetch-fail: grafik TETAP live setelah refetch gagal",
+              live_after is True, f"live={live_after}")
+        p50_after = page.evaluate("() => window.priceHistory.BTC.points[50].v")
+        check("chart-refetch-fail: deret live dipertahankan (sidik jari utuh, bukan sintetis)",
+              abs(p50_after - 999000000) < 1, f"points[50]={p50_after}")
+        note = page.text_content("#priceChartNote")
+        check("chart-refetch-fail: label tetap 'CoinGecko', bukan 'estimasi'",
+              "CoinGecko" in note and "estimasi" not in note.lower(), note)
+        # Jendela 10 menit dihormati: fetchPriceChart langsung tidak fetch lagi.
+        page.evaluate("() => { fetchPriceChart('BTC'); }")
+        page.wait_for_timeout(600)
+        check("chart-refetch-fail: tidak ada fetch ulang sebelum 10 menit",
+              chart_hits["n"] == 2, f"hits={chart_hits['n']}")
+        check("0 error JS (chart-refetch-fail)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_empty_input_stays_silent(pw):
     """Regresi: panel trade/futures DIAM saat input masih kosong —
     tanpa error merah dan tanpa halaman ketarik ke bawah.
@@ -3577,6 +3665,7 @@ def main():
                 test_quick_dot_decimal(pw)
             if which in ("chartrefetch", "all"):
                 test_chart_refetch_10min(pw)
+                test_chart_refetch_fail_keeps_live_series(pw)
             if which in ("emptyinput", "all"):
                 test_empty_input_stays_silent(pw)
             if which in ("menushort", "all"):
