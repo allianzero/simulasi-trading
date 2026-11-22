@@ -350,6 +350,54 @@ def test_position_row_no_overlap_narrow(pw):
         finally:
             browser.close()
 
+def test_market_row_no_wrap_narrow(pw):
+    # Baris pasar di layar sempit (<=400px): kolom harga min-width 148px
+    # + ikon 40px menyisakan ~16px untuk nama/simbol di 320px sehingga
+    # "BTC / IDR" membungkus jadi 3 baris ("BTC" / "/" / "IDR") di
+    # semua 8 koin. Perbaikan: di <=400px ikon 32px, harga 0.8rem,
+    # padding kartu 12px, simbol nowrap — nama + simbol satu baris.
+    price_state = {"live": dict(LIVE)}
+    market_js = """() => {
+      const out = [];
+      document.querySelectorAll('#marketList .market-row').forEach((row) => {
+        const sym = row.querySelector('.coin-symbol');
+        const name = row.querySelector('.coin-name');
+        const price = row.querySelector('.coin-price');
+        const linesOf = (el) => { if (!el) return 0; const r = document.createRange(); r.selectNodeContents(el); return r.getClientRects().length; };
+        const sr = sym ? sym.getBoundingClientRect() : null;
+        const pr = price ? price.getBoundingClientRect() : null;
+        out.push({
+          sym: sym ? sym.textContent.trim() : null,
+          symLines: linesOf(sym), nameLines: linesOf(name),
+          overlap: (sr && pr) ? Math.round(Math.max(0, Math.min(sr.right, pr.right) - Math.max(sr.left, pr.left))) : -1,
+          symRight: sr ? Math.round(sr.right) : -1, priceLeft: pr ? Math.round(pr.left) : -1,
+          rowH: Math.round(row.getBoundingClientRect().height)});
+      });
+      return out;
+    }"""
+    for w in (320, 360, 390, 420):
+        browser, ctx, page, errors = new_page(pw, {"width": w, "height": 844}, "live", price_state, touch=True)
+        try:
+            enter_guest(page)
+            page.wait_for_function("() => document.querySelectorAll('#marketList .market-row').length >= 8", timeout=10000)
+            page.wait_for_function("() => document.getElementById('marketList').textContent.includes('1.120.000.000')", timeout=10000)
+            m = page.evaluate(market_js)
+            check(f"pasar {w}px: 8 baris koin tampil", len(m) == 8, str(len(m)))
+            bad_sym = [x for x in m if x["symLines"] != 1]
+            check(f"pasar {w}px: simbol 'XXX / IDR' satu baris (tidak membungkus)",
+                  len(bad_sym) == 0, str(bad_sym))
+            bad_name = [x for x in m if x["nameLines"] != 1]
+            check(f"pasar {w}px: nama koin satu baris",
+                  len(bad_name) == 0, str(bad_name))
+            bad_ov = [x for x in m if x["overlap"] > 0]
+            check(f"pasar {w}px: simbol tidak menumpuk kolom harga",
+                  len(bad_ov) == 0, str(bad_ov))
+            check(f"pasar {w}px: tinggi baris normal (<=80px; rusak 88-112px)",
+                  all(x["rowH"] <= 80 for x in m), str([x["rowH"] for x in m]))
+            check(f"0 error JS (pasar {w}px)", len(errors) == 0, "; ".join(errors[:3]))
+        finally:
+            browser.close()
+
 def test_offline(pw):
     price_state = {"live": dict(LIVE)}
     browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "offline", price_state)
@@ -3086,6 +3134,8 @@ def main():
                 test_enter_key(pw)
             if which in ("posoverlap", "all"):
                 test_position_row_no_overlap_narrow(pw)
+            if which in ("marketwrap", "all"):
+                test_market_row_no_wrap_narrow(pw)
             if which in ("resetarmed", "all"):
                 test_reset_armed_profile_switch(pw)
             if which in ("profilectx", "all"):
