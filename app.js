@@ -333,6 +333,32 @@ function iconStyle(a) {
 
 function $(id) { return document.getElementById(id); }
 
+/* Fokus keyboard di dalam daftar yang dibangun ulang — renderMarket(),
+   renderPositions(), dan renderProfileUI() menghapus semua baris
+   (innerHTML = "") lalu membangunnya lagi di tiap renderAll() (tiap
+   refresh harga 30 detik). Tanpa ini, elemen yang sedang difokuskan
+   ikut dihancurkan sehingga fokus jatuh ke <body> dan pengguna
+   keyboard kehilangan posisinya tiap 30 detik — pernah: fokus di
+   baris pasar ETH / tombol Tutup posisi / item profil hilang setelah
+   renderAll(), padahal elemen statis seperti amountInput tetap fokus.
+   Tangkap identitas (atribut data-*) elemen yang difokuskan SEBELUM
+   daftar dibersihkan, lalu kembalikan fokus ke elemen baru yang sama
+   SESUDAH daftar dibangun — hanya bila elemen itu masih ada (posisi
+   yang terlikuidasi / tertutup TIDAK difokuskan ulang ke tombol lain,
+   karena itu bisa menutup posisi yang salah). preventScroll: true
+   supaya pengembalian fokus tidak menggeser halaman. */
+function focusedKey(listEl, selector, attr) {
+  var el = document.activeElement;
+  if (!el || !listEl.contains(el)) return null;
+  var row = el.closest ? el.closest(selector) : null;
+  return row ? row.getAttribute(attr) : null;
+}
+function refocusKey(listEl, selector, attr, key) {
+  if (!key) return;
+  var el = listEl.querySelector(selector + "[" + attr + '="' + key + '"]');
+  if (el) el.focus({ preventScroll: true });
+}
+
 /* ---------------- Toast ---------------- */
 
 var toastTimer = null;
@@ -1166,6 +1192,10 @@ function renderAll() {
 
 function renderMarket() {
   var list = $("marketList");
+  /* Tangkap baris pasar yang sedang difokuskan (lihat focusedKey):
+     daftar dibangun ulang di bawah, fokus harus dikembalikan ke
+     baris koin yang sama. */
+  var focusedSym = focusedKey(list, ".market-row", "data-symbol");
   list.innerHTML = "";
   /* Skeleton saat harga belum ada sama sekali (loading awal). */
   if (Object.keys(prices).length === 0) {
@@ -1186,6 +1216,7 @@ function renderMarket() {
     var row = document.createElement("button");
     row.type = "button";
     row.className = "market-row" + (a.symbol === selectedSymbol ? " selected" : "");
+    row.setAttribute("data-symbol", a.symbol);
     var changeCls = p && p.change >= 0 ? "up" : "down";
     var changeTxt = p ? fmtPct(p.change) : "—";
     /* Kilat warna singkat bila harga berubah sejak pembaruan lalu */
@@ -1227,6 +1258,8 @@ function renderMarket() {
     });
     list.appendChild(row);
   });
+  /* Kembalikan fokus ke baris koin yang sama (bila tadi difokuskan). */
+  refocusKey(list, ".market-row", "data-symbol", focusedSym);
   $("lastUpdated").textContent = lastUpdated
     ? new Date(lastUpdated).toLocaleTimeString("id-ID")
     : "—";
@@ -1492,6 +1525,10 @@ function hideFutConfirm() {
 
 function renderPositions() {
   var list = $("futPositions");
+  /* Tangkap tombol Tutup yang sedang difokuskan (lihat focusedKey):
+     daftar dibangun ulang di bawah, fokus harus dikembalikan ke
+     tombol Tutup posisi yang sama. */
+  var focusedPos = focusedKey(list, "button", "data-pos-id");
   list.innerHTML = "";
   if (!state.futures.length) {
     list.innerHTML = "<p class=\"empty-note\">Belum ada posisi futures.</p>";
@@ -1549,6 +1586,9 @@ function renderPositions() {
     list.appendChild(row);
   });
   window.__futuresPnl = hook;
+  /* Kembalikan fokus ke tombol Tutup posisi yang sama (bila tadi
+     difokuskan dan posisinya masih ada). */
+  refocusKey(list, "button", "data-pos-id", focusedPos);
 }
 
 /* ---------------- Profil (Guest) ---------------- */
@@ -1560,11 +1600,16 @@ function renderProfileUI() {
   $("profileAvatar").textContent = (state.name || "G").charAt(0).toUpperCase();
   $("profileName").textContent = state.name;
   var list = $("profileList");
+  /* Tangkap item profil yang sedang difokuskan (lihat focusedKey):
+     daftar dibangun ulang di bawah, fokus harus dikembalikan ke
+     item profil yang sama. */
+  var focusedProfile = focusedKey(list, ".profile-item", "data-profile-id");
   list.innerHTML = "";
   store.profiles.forEach(function (p) {
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "profile-item" + (p.id === store.activeProfileId ? " active" : "");
+    btn.setAttribute("data-profile-id", p.id);
     /* Nama profil JANGAN pernah lewat innerHTML: nama diketik user dan
        bisa berisi markup ("<b>TEST</b>" pernah tampil tebal di menu,
        "<img src=x>" pernah jadi elemen <img> sungguhan). Bangun DOM
@@ -1586,6 +1631,8 @@ function renderProfileUI() {
     btn.addEventListener("click", function () { switchProfile(p.id); });
     list.appendChild(btn);
   });
+  /* Kembalikan fokus ke item profil yang sama (bila tadi difokuskan). */
+  refocusKey(list, ".profile-item", "data-profile-id", focusedProfile);
   $("createProfileBtn").disabled = store.profiles.length >= MAX_PROFILES;
   $("profileNote").textContent = store.profiles.length >= MAX_PROFILES
     ? "Maksimal 5 profil tercapai. Data tiap profil tersimpan terpisah di perangkat ini."
