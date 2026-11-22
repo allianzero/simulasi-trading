@@ -349,6 +349,19 @@ function fmtClock(ts) {
   return new Date(ts).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
 }
 
+/* Label waktu sumbu X: sertakan tanggal bila rentang melewati
+   pergantian hari — jam saja ambigu: riwayat portofolio bisa
+   merentang berhari-hari (label "23.10" -> "01.05" tanpa tanggal
+   tampak seperti waktu mundur), dan label kanan grafik harga 24 jam
+   ("19.33") tidak menyebut hari apa padahal titik kirinya kemarin.
+   Bila satu hari yang sama, jam saja cukup. */
+function spansDays(t0, t1) {
+  return new Date(t0).toDateString() !== new Date(t1).toDateString();
+}
+function fmtAxisTime(ts, withDate) {
+  return withDate ? fmtTime(ts) : fmtClock(ts);
+}
+
 function assetOf(symbol) {
   for (var i = 0; i < ASSETS.length; i++) {
     if (ASSETS[i].symbol === symbol) return ASSETS[i];
@@ -918,13 +931,16 @@ function drawChart() {
   ctx.fillStyle = grad;
   ctx.fill();
 
-  /* Label waktu sumbu X (awal & akhir) */
+  /* Label waktu sumbu X (awal & akhir): sertakan tanggal bila
+     riwayat merentang lebih dari satu hari kalender. */
+  var xDate = spansDays(hist[0].t, hist[hist.length - 1].t);
+  var xLabels = [fmtAxisTime(hist[0].t, xDate), fmtAxisTime(hist[hist.length - 1].t, xDate)];
   ctx.fillStyle = "#5e6673";
   ctx.font = "10px 'IBM Plex Mono', monospace";
   ctx.textAlign = "left";
-  ctx.fillText(fmtClock(hist[0].t), left, h - 8);
+  ctx.fillText(xLabels[0], left, h - 8);
   ctx.textAlign = "right";
-  ctx.fillText(fmtClock(hist[hist.length - 1].t), right, h - 8);
+  ctx.fillText(xLabels[1], right, h - 8);
 
   /* Titik terakhir + label nilai */
   var lx = x(hist.length - 1);
@@ -950,7 +966,8 @@ function drawChart() {
   window.__portfolioChart = {
     points: hist.map(function (p, i) { return { t: p.t, v: p.v, x: x(i), y: y(p.v) }; }),
     w: w, h: h,
-    yLabels: yLabels
+    yLabels: yLabels,
+    xLabels: xLabels
   };
 }
 
@@ -1293,14 +1310,20 @@ function drawPriceChart() {
     window.__priceChart.order = { price: priceSeq, firstLabel: labelSeq };
   }
 
-  /* Label waktu: titik awal memakai tanggal+jam (24 jam lalu = jam
-     yang sama dengan sekarang), titik akhir cukup jam. */
+  /* Label waktu: sertakan tanggal di kedua ujung bila deret
+     melewati pergantian hari (deret 24 jam selalu begitu — titik
+     awal kemarin, titik akhir hari ini; sebelumnya label kanan
+     hanya jam, "19.33", tanpa menyebut hari apa). */
+  var xDate = spansDays(pts[0].t, pts[pts.length - 1].t);
+  var xLabels = [fmtAxisTime(pts[0].t, xDate), fmtAxisTime(pts[pts.length - 1].t, xDate)];
   ctx.fillStyle = "#5e6673";
   ctx.font = "10px 'IBM Plex Mono', monospace";
   ctx.textAlign = "left";
-  ctx.fillText(fmtTime(pts[0].t), left, hh - 8);
+  ctx.fillText(xLabels[0], left, hh - 8);
   ctx.textAlign = "right";
-  ctx.fillText(fmtClock(pts[pts.length - 1].t), right, hh - 8);
+  ctx.fillText(xLabels[1], right, hh - 8);
+  /* Hook label waktu sumbu X untuk pengujian otomatis (bukan bagian UI). */
+  if (window.__priceChart) window.__priceChart.xLabels = xLabels;
   var lastV = pts[pts.length - 1].v;
   var lx = x(pts[pts.length - 1].t), ly2 = y(lastV);
   ctx.beginPath(); ctx.arc(lx, ly2, 5.5, 0, Math.PI * 2);
