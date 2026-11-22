@@ -1393,6 +1393,55 @@ def test_overlapping_confirms(pw):
     finally:
         browser.close()
 
+def test_offline_confirm_cancelled(pw):
+    """Regresi: konfirmasi trade/futures yang dibuka saat LIVE harus
+    DIBATALKAN begitu harga jatuh offline — walau harga contoh
+    kebetulan SAMA dengan harga live. Pernah: TRX live Rp4.500 ==
+    contoh Rp4.500, jadi invalidateStaleConfirms (toleransi 0,1%)
+    tidak membatalkan; posisi Long + beli spot tereksekusi saat badge
+    sudah OFFLINE. Kini konfirmasi dibatalkan + toast, tanpa eksekusi."""
+    live = dict(LIVE)
+    live["tron"] = {"idr": 4500, "idr_24h_change": 0.9}
+    price_state = {"live": live}
+    browser, ctx, page, errors = new_page(
+        pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        enter_guest(page)
+        page.click('.market-row[data-symbol="TRX"]')
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        page.fill("#futMarginInput", "100000")
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        page.fill("#amountInput", "100000")
+        page.click("#tradeBtn")
+        page.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        check("offline-confirm: kedua konfirmasi terbuka saat live",
+              page.is_visible("#futConfirmBox") and page.is_visible("#confirmBox"))
+        # Putuskan semua API -> refresh -> harga contoh (TRX contoh Rp4.500 == live)
+        page.route("**/api.coingecko.com/**", lambda r: r.abort())
+        page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+        page.route("**/api.binance.com/**", lambda r: r.abort())
+        page.click("#refreshBtn")
+        page.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent.includes('OFFLINE')",
+            timeout=15000)
+        check("offline-confirm: konfirmasi futures DIBATALKAN saat offline",
+              page.is_hidden("#futConfirmBox"), "futConfirmBox masih tampil")
+        check("offline-confirm: konfirmasi spot DIBATALKAN saat offline",
+              page.is_hidden("#confirmBox"), "confirmBox masih tampil")
+        check("offline-confirm: toast menjelaskan konfirmasi dibatalkan",
+              "konfirmasi dibatalkan" in page.text_content("#toast"),
+              page.text_content("#toast"))
+        check("offline-confirm: belum ada posisi futures + kas tetap Rp5.000.000",
+              "Belum ada posisi futures" in page.text_content("#futPositions") and
+              "5.000.000" in cash_text(page),
+              cash_text(page))
+        check("0 error JS (offline-confirm)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_panel_mark_offline(pw):
     """Regresi: 'Harga saat ini' (spot) + 'Harga mark' (futures) di panel
     TIDAK BOLEH menampilkan harga contoh saat offline (pernah: panel
@@ -3348,6 +3397,7 @@ def main():
             if which in ("stale", "all"):
                 test_stale_confirm(pw)
                 test_stale_confirm_tolerance(pw)
+                test_offline_confirm_cancelled(pw)
             if which in ("panelmark", "all"):
                 test_panel_mark_offline(pw)
             if which in ("futerr", "all"):
