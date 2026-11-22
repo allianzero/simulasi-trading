@@ -350,6 +350,85 @@ def test_position_row_no_overlap_narrow(pw):
         finally:
             browser.close()
 
+def test_position_row_no_overlap_desktop(pw):
+    # Baris posisi di DESKTOP juga menumpuk: kartu posisi tinggal di
+    # kolom samping yang lebarnya 400px (>=1024px) — setelah PnL
+    # (~170px) + tombol Tutup (~55px) + gap, kolom info tinggal
+    # ~115px sehingga angka "Rp1.120.000.000" yang tidak bisa diputus
+    # meluber dan menumpuk teks PnL. Terbukti live 22 Nov 21:49 WIB
+    # pada posisi user: "PnL +Rp146.870 (+29,37%)" menimpa nilai mark
+    # "Rp1.112.281.928", dan LONG/BTC/10x jatuh ke baris sendiri.
+    # Perbaikan run 42 hanya membungkus di <=400px viewport — kolom
+    # samping desktop 400px mengalami hal yang sama. Perbaikan:
+    # .position-row SELALU membungkus (info selebar kartu, PnL +
+    # Tutup di baris kedua), di semua lebar. Harga digeser +10%
+    # setelah buka posisi supaya teks PnL panjang seperti di produksi
+    # ("PnL +Rp100.000 (+100,00%)", bukan "PnL Rp0 (0,00%)").
+    price_state = {"live": dict(LIVE)}
+    overlap_js = """() => {
+      const out = [];
+      document.querySelectorAll('.position-row').forEach((row) => {
+        const detail = row.querySelector('.position-detail');
+        const pnl = row.querySelector('.holding-value');
+        if (!detail || !pnl) return;
+        const rg = document.createRange(); rg.selectNodeContents(detail);
+        const db = rg.getBoundingClientRect();
+        const pr = pnl.getBoundingClientRect();
+        out.push({
+          xOverlap: Math.round(Math.max(0, Math.min(db.right, pr.right) - Math.max(db.left, pr.left))),
+          yOverlap: Math.round(Math.max(0, Math.min(db.bottom, pr.bottom) - Math.max(db.top, pr.top)))});
+      });
+      return out;
+    }"""
+    headline_js = """() => {
+      const out = [];
+      document.querySelectorAll('.position-row').forEach((row) => {
+        const badge = row.querySelector('.dir-badge');
+        const strong = row.querySelector('.position-info strong');
+        if (!badge || !strong) return;
+        const b = badge.getBoundingClientRect(), s = strong.getBoundingClientRect();
+        out.push({sameLine: Math.abs(b.top - s.top) < 2,
+                  badgeTop: Math.round(b.top), strongTop: Math.round(s.top)});
+      });
+      return out;
+    }"""
+    for w in (1280, 1024, 800, 500):
+        browser, ctx, page, errors = new_page(pw, {"width": w, "height": 800}, "live", price_state)
+        try:
+            enter_guest(page)
+            page.wait_for_timeout(600)
+            page.fill("#futMarginInput", "100000")
+            page.click("#futBtn")
+            page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+            page.click("#futConfirmYes")
+            page.wait_for_timeout(500)
+            price_state["live"] = dict(LIVE)
+            price_state["live"]["bitcoin"] = {"idr": 1232000000, "idr_24h_change": 10.0}
+            page.click("#refreshBtn")
+            page.wait_for_timeout(2500)
+            check(f"posisi desktop {w}px: posisi Long 10x terbuka",
+                  "LONG" in page.text_content("#futPositions"))
+            check(f"posisi desktop {w}px: PnL panjang tampil (+Rp100.000)",
+                  "+Rp100.000" in page.text_content("#futPositions"),
+                  page.text_content("#futPositions")[:200])
+            m = page.evaluate(overlap_js)
+            check(f"posisi desktop {w}px: PnL tidak menumpuk teks detail",
+                  len(m) == 1 and (m[0]["xOverlap"] == 0 or m[0]["yOverlap"] == 0), str(m))
+            h = page.evaluate(headline_js)
+            check(f"posisi desktop {w}px: badge LONG + 'BTC 10x' satu baris",
+                  len(h) == 1 and h[0]["sameLine"], str(h))
+            btn = page.locator("#futPositions [data-pos-id]")
+            box = btn.bounding_box()
+            check(f"posisi desktop {w}px: tombol Tutup di dalam viewport",
+                  box is not None and box["x"] + box["width"] <= w + 1, str(box))
+            btn.click()
+            page.wait_for_timeout(400)
+            check(f"posisi desktop {w}px: tombol Tutup berfungsi (posisi tertutup)",
+                  "Belum ada posisi" in page.text_content("#futPositions"))
+            check(f"0 error JS (posisi desktop {w}px)", len(errors) == 0, "; ".join(errors[:3]))
+        finally:
+            browser.close()
+
 def test_market_row_no_wrap_narrow(pw):
     # Baris pasar di layar sempit (<=400px): kolom harga min-width 148px
     # + ikon 40px menyisakan ~16px untuk nama/simbol di 320px sehingga
@@ -3431,6 +3510,8 @@ def main():
                 test_enter_key(pw)
             if which in ("posoverlap", "all"):
                 test_position_row_no_overlap_narrow(pw)
+            if which in ("posdesk", "all"):
+                test_position_row_no_overlap_desktop(pw)
             if which in ("marketwrap", "all"):
                 test_market_row_no_wrap_narrow(pw)
             if which in ("statbreak", "all"):
