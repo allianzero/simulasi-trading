@@ -1178,8 +1178,40 @@ function drawPriceChart() {
     ctx.fillText(fmtCompact(gv), 4, gy + 3);
   }
 
+  /* Garis harga + isi gradien — digambar SEBELUM garis entry /
+     likuidasi / mark + labelnya, supaya garis harga tidak menimpa
+     pill label (bug: label "Entry LONG 10x Rp1.080.542.121"
+     tertutup sebagian garis harga oranye). */
+  var drawSeq = 0, priceSeq = 0, labelSeq = 0;
+  var up = pts[pts.length - 1].v >= pts[0].v;
+  var color = (a && a.color) || (up ? "#0ecb81" : "#f6465d");
+  ctx.beginPath();
+  ctx.moveTo(x(pts[0].t), y(pts[0].v));
+  for (var i = 1; i < pts.length; i++) {
+    var mx = (x(pts[i - 1].t) + x(pts[i].t)) / 2;
+    var my = (y(pts[i - 1].v) + y(pts[i].v)) / 2;
+    ctx.quadraticCurveTo(x(pts[i - 1].t), y(pts[i - 1].v), mx, my);
+  }
+  ctx.lineTo(x(pts[pts.length - 1].t), y(pts[pts.length - 1].v));
+  priceSeq = ++drawSeq; /* urutan gambar: garis harga dulu */
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke();
+  ctx.lineTo(x(pts[pts.length - 1].t), bottom);
+  ctx.lineTo(x(pts[0].t), bottom);
+  ctx.closePath();
+  var grad = ctx.createLinearGradient(0, top, 0, bottom);
+  grad.addColorStop(0, up ? "rgba(14,203,129,0.25)" : "rgba(246,70,93,0.25)");
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = grad;
+  ctx.fill();
+
   /* Garis entry / likuidasi / mark + labelnya (label digeser bila
-     dua garis berdekatan agar tidak saling menumpuk). */
+     dua garis berdekatan agar tidak saling menumpuk). Garis + label
+     ini digambar SETELAH garis harga supaya garis harga tidak
+     menimpa pill label. */
   var usedLabelY = [];
   lines.forEach(function (l) {
     var ly = y(l.price);
@@ -1203,33 +1235,15 @@ function drawPriceChart() {
     roundRectPath(ctx, left + 4, labelY, tw + 12, 15, 7);
     ctx.fill();
     ctx.fillStyle = l.color;
+    if (!labelSeq) labelSeq = ++drawSeq; /* urutan gambar: label garis */
     ctx.fillText(l.label, left + 10, labelY + 11);
   });
 
-  /* Garis harga + isi gradien */
-  var up = pts[pts.length - 1].v >= pts[0].v;
-  var color = (a && a.color) || (up ? "#0ecb81" : "#f6465d");
-  ctx.beginPath();
-  ctx.moveTo(x(pts[0].t), y(pts[0].v));
-  for (var i = 1; i < pts.length; i++) {
-    var mx = (x(pts[i - 1].t) + x(pts[i].t)) / 2;
-    var my = (y(pts[i - 1].v) + y(pts[i].v)) / 2;
-    ctx.quadraticCurveTo(x(pts[i - 1].t), y(pts[i - 1].v), mx, my);
+  /* Hook urutan gambar untuk pengujian otomatis: garis harga harus
+     digambar SEBELUM label garis entry/likuidasi/mark. */
+  if (window.__priceChart) {
+    window.__priceChart.order = { price: priceSeq, firstLabel: labelSeq };
   }
-  ctx.lineTo(x(pts[pts.length - 1].t), y(pts[pts.length - 1].v));
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
-  ctx.stroke();
-  ctx.lineTo(x(pts[pts.length - 1].t), bottom);
-  ctx.lineTo(x(pts[0].t), bottom);
-  ctx.closePath();
-  var grad = ctx.createLinearGradient(0, top, 0, bottom);
-  grad.addColorStop(0, up ? "rgba(14,203,129,0.25)" : "rgba(246,70,93,0.25)");
-  grad.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = grad;
-  ctx.fill();
 
   /* Label waktu: titik awal memakai tanggal+jam (24 jam lalu = jam
      yang sama dengan sekarang), titik akhir cukup jam. */
