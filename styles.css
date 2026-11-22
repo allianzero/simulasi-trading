@@ -637,6 +637,18 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 .dir-long { color: var(--green); background: var(--green-bg); }
 .dir-short { color: var(--red); background: var(--red-bg); }
 .pos-pnl { font-family: var(--font-num); font-weight: 600; display: block; }
+/* Layar sempit (<=400px): kolom info baris posisi terlalu sempit untuk
+   angka "Rp 1.120.000.000" yang tidak bisa diputus di tengah — teks
+   detail meluber keluar kotaknya dan menumpuk teks PnL (terukur:
+   tumpang tindih 78px di 320px, 38px di 360px, 8px di 390px; hilang
+   di 400px). Di layar kecil ini baris membungkus: info posisi
+   selebar kartu di baris pertama, PnL + tombol Tutup di baris kedua,
+   sehingga tidak ada lagi teks yang bertumpuk. */
+@media (max-width: 400px) {
+  .position-row { flex-wrap: wrap; row-gap: 8px; }
+  .position-row .position-info { flex: 1 1 100%; }
+  .position-row .holding-value { flex: 1 1 auto; }
+}
 /* Label kecil penanda PnL beku: dihitung dari harga live terakhir,
    bukan dari harga contoh offline. */
 .pnl-frozen { display: block; font-size: 0.72rem; color: var(--muted); font-weight: 400; margin-top: 2px; }
