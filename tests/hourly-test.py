@@ -221,6 +221,41 @@ def test_mobile_live(pw):
     finally:
         browser.close()
 
+def test_lev_chips_narrow(pw):
+    # Chip leverage di layar sangat sempit (320px): 5 chip dengan lebar
+    # alami butuh ~298px sementara lebar konten kartu ~252px, sehingga
+    # chip 100x terpotong 12px di luar layar (bodySW 332) dan tidak bisa
+    # diklik penuh — overflow-x:hidden menyembunyikan sisanya.
+    price_state = {"live": dict(LIVE)}
+    for w in (320, 360):
+        browser, ctx, page, errors = new_page(pw, {"width": w, "height": 844}, "live", price_state, touch=True)
+        try:
+            enter_guest(page)
+            page.wait_for_timeout(600)
+            m = page.evaluate("() => ({chipsRight: Math.round(document.getElementById('levChips').getBoundingClientRect().right), "
+                              "vw: window.innerWidth, bodySW: document.body.scrollWidth})")
+            check(f"chip leverage {w}px: baris chip di dalam viewport (kanan <= {w})",
+                  m["chipsRight"] <= m["vw"], str(m))
+            check(f"chip leverage {w}px: body tanpa overflow horizontal",
+                  m["bodySW"] <= m["vw"], str(m))
+            last = page.locator('.lev-chip[data-lev="100"]')
+            box = last.bounding_box()
+            check(f"chip leverage {w}px: chip 100x seluruhnya terlihat",
+                  box is not None and box["x"] + box["width"] <= w + 1, str(box))
+            last.click()
+            check(f"chip leverage {w}px: chip 100x bisa diklik (label 100x)",
+                  page.text_content("#futLevLabel") == "100x")
+            page.fill("#futMarginInput", "100000")
+            page.click("#futBtn")
+            page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+            page.click("#futConfirmYes")
+            page.wait_for_timeout(400)
+            check(f"chip leverage {w}px: posisi Long 100x terbuka",
+                  "100x" in page.text_content("#futPositions"))
+            check(f"0 error JS (chip leverage {w}px)", len(errors) == 0, "; ".join(errors[:3]))
+        finally:
+            browser.close()
+
 def test_offline(pw):
     price_state = {"live": dict(LIVE)}
     browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "offline", price_state)
@@ -2772,6 +2807,7 @@ def main():
             if which in ("live", "all"):
                 test_live(pw)
                 test_mobile_live(pw)
+                test_lev_chips_narrow(pw)
                 test_sell_max(pw)
                 test_tab_switch_clears_input(pw)
                 test_profile_name_escaped(pw)
