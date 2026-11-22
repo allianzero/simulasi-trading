@@ -751,6 +751,15 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
   padding: 8px;
   z-index: 50;
   animation: rise 0.2s ease both;
+  /* Menu bisa lebih tinggi dari viewport pendek (HP landscape):
+     5 profil + form + catatan ≈ 380px, sementara topbar sticky
+     membuat menu tidak ikut halaman saat di-scroll — bagian bawah
+     (tombol Buat / catatan) terpotong dan tidak bisa dijangkau.
+     Pernah: di 700x360 tombol Buat di y 341–383 (di luar layar),
+     di 640x320 menu bawah di y 494. Batasi tinggi menu dan gulir
+     di dalamnya bila perlu; di layar tinggi tidak berubah. */
+  max-height: calc(100vh - 130px);
+  overflow-y: auto;
 }
 .profile-menu h3 {
   margin: 6px 10px 8px;
