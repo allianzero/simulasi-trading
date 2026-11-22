@@ -2426,6 +2426,97 @@ def test_multitab_sync(pw):
     finally:
         browser.close()
 
+def test_multitab_snapshot_keeps_context(pw):
+    """Regresi: snapshot grafik portofolio dari tab lain TIDAK boleh
+    menghapus konteks trade tab ini. Pernah: handler `storage` selalu
+    memanggil clearTradeContext() di setiap perubahan store — padahal
+    tab lain menyimpan store tiap ~30 detik hanya untuk snapshot
+    grafik (history), tanpa mengubah kas/holding/posisi. Akibatnya
+    tab B yang sedang membuka konfirmasi beli Rp1.000.000 kehilangan
+    input + konfirmasinya begitu tab A me-refresh harga. Perbaikan:
+    handler `storage` hanya membatalkan konteks trade bila sidik data
+    trade profil aktif (kas/holding/futures/riwayat trade) berubah;
+    perubahan history saja tidak menyentuh konteks trade. Kontrol
+    balik: trade SUNGGUHAN di tab lain tetap membatalkan konteks."""
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, pageA, errorsA = new_page(pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        enter_guest(pageA)
+        pageA.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        # Tab A beli BTC dulu — supaya perubahan harga mengubah total
+        # portofolio dan snapshot berikutnya benar-benar tersimpan.
+        pageA.fill("#amountInput", "1000000")
+        pageA.click("#tradeBtn")
+        pageA.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        pageA.click("#confirmYes")
+        pageA.wait_for_function("() => document.getElementById('confirmBox').hidden", timeout=5000)
+        check("multitab-snapshot: tab A beli BTC, kas Rp4.000.000",
+              "4.000.000" in cash_text(pageA), cash_text(pageA))
+        # Tab B di context yang sama
+        pageB = ctx.new_page()
+        errorsB = []
+        pageB.on("pageerror", lambda e: errorsB.append(str(e)))
+        pageB.on("console", lambda m: errorsB.append("console." + m.type + ": " + m.text)
+                 if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+        route_page(pageB, "live", price_state)
+        pageB.goto(BASE)
+        pageB.wait_for_function("() => !document.getElementById('profileWrap').hidden", timeout=10000)
+        pageB.wait_for_function(
+            "() => document.getElementById('priceBadgeText').textContent === 'HARGA LIVE'",
+            timeout=10000)
+        check("multitab-snapshot: tab B ikut sinkron, kas Rp4.000.000",
+              "4.000.000" in cash_text(pageB), cash_text(pageB))
+        # Tab B: ketik jumlah + buka konfirmasi beli
+        pageB.fill("#amountInput", "1000000")
+        pageB.click("#tradeBtn")
+        pageB.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        n_hist_before = pageB.evaluate(
+            "() => JSON.parse(localStorage.getItem('simulasi-trading-v2')).profiles[0].history.length")
+        # Tab A: harga berubah sedikit -> refresh -> snapshot baru tersimpan
+        price_state["live"]["bitcoin"] = {"idr": 1121000000, "idr_24h_change": 1.6}
+        pageA.evaluate("() => fetchPrices()")
+        pageA.wait_for_timeout(1500)
+        n_hist_after = pageB.evaluate(
+            "() => JSON.parse(localStorage.getItem('simulasi-trading-v2')).profiles[0].history.length")
+        check("multitab-snapshot: snapshot tab A memang tersimpan (history bertambah)",
+              n_hist_after > n_hist_before, f"{n_hist_before} -> {n_hist_after}")
+        check("multitab-snapshot: input tab B MASIH '1000000' setelah snapshot tab A",
+              pageB.input_value("#amountInput") == "1000000",
+              repr(pageB.input_value("#amountInput")))
+        check("multitab-snapshot: konfirmasi tab B MASIH terbuka setelah snapshot tab A",
+              not pageB.is_hidden("#confirmBox"))
+        check("multitab-snapshot: pratinjau tab B MASIH tampil setelah snapshot tab A",
+              not pageB.is_hidden("#previewBox"))
+        # Kontrol: konfirmasi yang dipertahankan tetap bisa dieksekusi
+        pageB.click("#confirmYes")
+        pageB.wait_for_function("() => document.getElementById('confirmBox').hidden", timeout=5000)
+        check("multitab-snapshot: konfirmasi tab B berhasil dieksekusi, kas Rp3.000.000",
+              "3.000.000" in cash_text(pageB), cash_text(pageB))
+        # Kontrol balik: trade SUNGGUHAN di tab lain tetap membatalkan konteks
+        pageB.fill("#amountInput", "500000")
+        pageB.click("#tradeBtn")
+        pageB.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        pageA.bring_to_front()
+        pageA.click("#tabSell")
+        pageA.fill("#amountInput", "0,0004")
+        pageA.click("#tradeBtn")
+        pageA.wait_for_selector("#confirmBox:not([hidden])", timeout=5000)
+        pageA.click("#confirmYes")
+        pageA.wait_for_function("() => document.getElementById('confirmBox').hidden", timeout=5000)
+        pageB.wait_for_timeout(1200)  # beri waktu event storage sampai ke B
+        check("multitab-snapshot: trade tab A membatalkan input tab B",
+              pageB.input_value("#amountInput") == "",
+              repr(pageB.input_value("#amountInput")))
+        check("multitab-snapshot: trade tab A menutup konfirmasi tab B",
+              pageB.is_hidden("#confirmBox"))
+        check("0 error JS (multitab-snapshot, tab A)", len(errorsA) == 0, "; ".join(errorsA[:3]))
+        check("0 error JS (multitab-snapshot, tab B)", len(errorsB) == 0, "; ".join(errorsB[:3]))
+        pageB.close()
+    finally:
+        browser.close()
+
 def test_quick_zero_feedback(pw):
     """Regresi: tombol cepat memberi umpan balik saat tidak ada yang
     bisa dijual/dibeli. Pernah: mode Jual tanpa holding, klik 25% /
@@ -2903,6 +2994,7 @@ def main():
                 test_pending_cleared_on_hide(pw)
             if which in ("multitab", "all"):
                 test_multitab_sync(pw)
+                test_multitab_snapshot_keeps_context(pw)
             if which in ("welcomefocus", "all"):
                 test_welcome_no_autofocus_mobile(pw)
                 test_welcome_behind_overlay(pw)
