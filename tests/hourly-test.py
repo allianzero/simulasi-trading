@@ -3679,6 +3679,81 @@ def test_portfolio_chart_time_axis(pw):
     finally:
         browser.close()
 
+def test_yaxis_single_unit(pw):
+    # Sumbu Y grafik memakai dua satuan sekaligus: fmtCompact() memilih
+    # satuan PER LABEL — pada grafik BTC ~Rp1,12 Miliar, garis grid
+    # bawah (Rp998,77 jt, < 1e9) memakai "jt" sementara garis di
+    # atasnya (Rp1,04 M, > 1e9) memakai "M". Terbukti probe Node:
+    # ["Rp998,77 jt", "Rp1,04 M", "Rp1,07 M", "Rp1,11 M", "Rp1,15 M"].
+    # Perbaikan: satuan dipilih sekali dari nilai maks sumbu
+    # (axisUnit) dan dipakai semua label (fmtCompactAxis); nilai di
+    # bawah 1 satuan ditulis 2 desimal ("Rp1,00 M", bukan "Rp1 M").
+    # Tes: deret 24 jam BTC melintasi Rp1 Miliar + riwayat portofolio
+    # melintasi Rp1 juta — semua label satu sumbu harus satu satuan.
+    import re, time
+    now = int(time.time() * 1000)
+    pts = [[now - (96 - i) * 900000, 998770000 + i * 1262500] for i in range(97)]
+    hist = [{"t": now - (24 - i) * 3600 * 1000, "v": 950000 + i * 6250} for i in range(25)]
+    store = {"version": 2, "activeProfileId": "p1",
+             "profiles": [{"id": "p1", "name": "Bray", "createdAt": 1,
+                           "cash": 1100000, "holdings": {}, "trades": [],
+                           "history": hist, "futures": []}]}
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        url = route.request.url
+        if "simple/price" in url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps({"prices": pts}))
+        else:
+            route.abort()
+
+    page.route("**/api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.evaluate("(s) => localStorage.setItem('simulasi-trading-v2', JSON.stringify(s))", store)
+        page.reload()
+        page.wait_for_timeout(1500)
+        page.wait_for_function(
+            "() => window.__priceChart && window.__priceChart.yLabels && window.__priceChart.yLabels.length === 5",
+            timeout=15000)
+        page.wait_for_function(
+            "() => window.__portfolioChart && window.__portfolioChart.yLabels && window.__portfolioChart.yLabels.length === 5",
+            timeout=10000)
+        yl = page.evaluate("() => window.__priceChart.yLabels")
+        pl = page.evaluate("() => window.__portfolioChart.yLabels")
+
+        def unit_of(label):
+            m = re.search(r"( M| jt| rb)$", label)
+            return m.group(1) if m else "?"
+
+        check("yaxis: 5 label sumbu Y grafik harga terbaca", len(yl) == 5, str(yl))
+        check("yaxis: semua label grafik harga satu satuan (M)",
+              len(set(unit_of(l) for l in yl)) == 1 and unit_of(yl[0]) == " M", str(yl))
+        check("yaxis: label bawah grafik harga bukan 'jt' (Rp0,98 M, bukan Rp980,59 jt)",
+              "jt" not in yl[0] and yl[0].startswith("Rp0,98"), str(yl))
+        check("yaxis: label bawah ditulis 2 desimal, bukan 'Rp1 M'",
+              yl[0] != "Rp1 M", str(yl))
+        check("yaxis: 5 label sumbu Y grafik portofolio terbaca", len(pl) == 5, str(pl))
+        check("yaxis: semua label grafik portofolio satu satuan (jt)",
+              len(set(unit_of(l) for l in pl)) == 1 and unit_of(pl[0]) == " jt", str(pl))
+        check("yaxis: label bawah portofolio bukan 'rb' (Rp0,46 jt, bukan Rp464 rb)",
+              "rb" not in pl[0], str(pl))
+        check("0 error JS (yaxis)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -3770,6 +3845,8 @@ def main():
                 test_chart_label_draw_order(pw)
             if which in ("charttime", "all"):
                 test_portfolio_chart_time_axis(pw)
+            if which in ("yaxisunit", "all"):
+                test_yaxis_single_unit(pw)
             if which in ("emptyinput", "all"):
                 test_empty_input_stays_silent(pw)
             if which in ("menushort", "all"):
