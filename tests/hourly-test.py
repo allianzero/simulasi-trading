@@ -256,6 +256,50 @@ def test_lev_chips_narrow(pw):
         finally:
             browser.close()
 
+def test_topbar_offline_narrow(pw):
+    # Topbar offline di layar sangat sempit (320/360px): badge offline
+    # "HARGA CONTOH (OFFLINE)" 198px + Refresh 99px + avatar profil 40px
+    # = 352px, sementara lebar konten cuma 288px (320px) / 328px (360px).
+    # .top-actions punya flex-shrink:0 sehingga tidak mengecil — tombol
+    # profil jatuh di x 328-368 (di luar viewport, bodySW 368) sehingga
+    # tidak terlihat dan tidak bisa diketik, padahal overflow-x:hidden
+    # menyembunyikan sisanya. Saat live (badge 109px) baris muat.
+    price_state = {"live": dict(LIVE)}
+    for w in (320, 360):
+        browser, ctx, page, errors = new_page(pw, {"width": w, "height": 844}, "offline", price_state, touch=True)
+        try:
+            enter_guest(page)
+            page.wait_for_function(
+                "() => document.getElementById('priceBadgeText').textContent.includes('CONTOH')",
+                timeout=15000)
+            page.wait_for_timeout(400)
+            m = page.evaluate("() => ({bodySW: document.body.scrollWidth, vw: window.innerWidth, "
+                              "prof: (() => { const b = document.getElementById('profileBtn').getBoundingClientRect(); return {x: Math.round(b.left), right: Math.round(b.right)}; })(), "
+                              "ref: (() => { const b = document.getElementById('refreshBtn').getBoundingClientRect(); return {right: Math.round(b.right)}; })()})")
+            check(f"topbar offline {w}px: body tanpa overflow horizontal",
+                  m["bodySW"] <= m["vw"], str(m))
+            check(f"topbar offline {w}px: tombol profil di dalam viewport (kanan <= {w})",
+                  m["prof"]["right"] <= w, str(m["prof"]))
+            check(f"topbar offline {w}px: tombol Refresh di dalam viewport",
+                  m["ref"]["right"] <= w, str(m["ref"]))
+            page.click("#profileBtn")
+            check(f"topbar offline {w}px: tombol profil bisa diklik (menu terbuka)",
+                  page.is_visible("#profileMenu"))
+            check(f"0 error JS (topbar offline {w}px)", len(errors) == 0, "; ".join(errors[:3]))
+        finally:
+            browser.close()
+    # Kontrol live 320px: baris tetap satu baris, tidak berubah.
+    browser, ctx, page, errors = new_page(pw, {"width": 320, "height": 844}, "live", price_state, touch=True)
+    try:
+        enter_guest(page)
+        page.wait_for_timeout(400)
+        box = page.locator("#profileBtn").bounding_box()
+        check("topbar live 320px: tombol profil tetap di dalam viewport",
+              box is not None and box["x"] + box["width"] <= 321, str(box))
+        check("0 error JS (topbar live 320px)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_offline(pw):
     price_state = {"live": dict(LIVE)}
     browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "offline", price_state)
@@ -2823,6 +2867,7 @@ def main():
                 test_micro_sell_quick(pw)
             if which in ("offline", "all"):
                 test_offline(pw)
+                test_topbar_offline_narrow(pw)
                 test_spot_offline_blocked(pw)
             if which in ("binance", "all"):
                 test_binance(pw)
