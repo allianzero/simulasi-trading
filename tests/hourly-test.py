@@ -2569,8 +2569,12 @@ def test_toast_above_welcome_overlay(pw):
         page.wait_for_selector("#welcomeOverlay:not([hidden])", timeout=10000)
         page.evaluate("() => showToast('Uji toast di atas overlay', 'error')")
         page.wait_for_function("() => document.getElementById('toast').classList.contains('show')", timeout=5000)
+        # Opacity butuh transisi 0.25s (.toast) — tunggu sampai 1, jangan
+        # baca tepat setelah class show (saat itu opacity masih 0).
+        page.wait_for_function("() => getComputedStyle(document.getElementById('toast')).opacity === '1'", timeout=5000)
         check("toast-overlay: toast tampil (class show, opacity 1) saat overlay sambutan terbuka",
-              page.evaluate("getComputedStyle(document.getElementById('toast')).opacity === '1'"))
+              page.evaluate("getComputedStyle(document.getElementById('toast')).opacity === '1'"),
+              page.evaluate("getComputedStyle(document.getElementById('toast')).opacity"))
         check("toast-overlay: toast & overlay satu konteks stacking (anak langsung body)",
               page.evaluate("document.getElementById('toast').parentElement === document.body && document.getElementById('welcomeOverlay').parentElement === document.body"))
         check("toast-overlay: z-index toast di atas overlay sambutan",
