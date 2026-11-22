@@ -637,17 +637,28 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 .dir-long { color: var(--green); background: var(--green-bg); }
 .dir-short { color: var(--red); background: var(--red-bg); }
 .pos-pnl { font-family: var(--font-num); font-weight: 600; display: block; }
-/* Layar sempit (<=400px): kolom info baris posisi terlalu sempit untuk
-   angka "Rp 1.120.000.000" yang tidak bisa diputus di tengah — teks
-   detail meluber keluar kotaknya dan menumpuk teks PnL (terukur:
-   tumpang tindih 78px di 320px, 38px di 360px, 8px di 390px; hilang
-   di 400px). Di layar kecil ini baris membungkus: info posisi
-   selebar kartu di baris pertama, PnL + tombol Tutup di baris kedua,
-   sehingga tidak ada lagi teks yang bertumpuk. */
+/* Baris posisi SELALU membungkus — BUKAN hanya di layar <=400px.
+   Kartu posisi tinggal di kolom samping yang lebarnya 400px di
+   desktop (>=1024px): setelah PnL (~170px) + tombol Tutup (~55px)
+   + gap, kolom info tinggal ~115px, sementara angka
+   "Rp1.112.281.928" tidak bisa diputus di tengah sehingga teks
+   detail meluber keluar kotaknya dan menumpuk teks PnL. Terbukti
+   live 22 Nov 21:49 WIB pada posisi user yang sedang terbuka:
+   "PnL +Rp146.870 (+29,37%)" menimpa nilai mark
+   "Rp1.112.281.928", dan LONG/BTC/10x jatuh ke baris sendiri.
+   Perbaikan lama (run 42) hanya membungkus di <=400px viewport —
+   padahal kolom samping desktop 400px mengalami hal yang sama.
+   Dengan membungkus di semua lebar, info posisi selebar kartu di
+   baris pertama dan PnL + Tutup di baris kedua: tidak ada lagi
+   teks yang bertumpuk di lebar berapa pun. */
+.position-row { flex-wrap: wrap; row-gap: 8px; }
+.position-row .position-info { flex: 1 1 100%; }
+.position-row .holding-value { flex: 1 1 auto; }
+/* Layar sempit (<=400px): baris posisi sudah membungkus lewat aturan
+   dasar di atas (dulu di sini, dipindah karena kolom samping desktop
+   400px mengalami tumpang tindih yang sama). Sisa aturan di bawah ini
+   hanya untuk hal lain di layar sangat sempit. */
 @media (max-width: 400px) {
-  .position-row { flex-wrap: wrap; row-gap: 8px; }
-  .position-row .position-info { flex: 1 1 100%; }
-  .position-row .holding-value { flex: 1 1 auto; }
   /* Baris pasar di layar sangat sempit: kolom harga min-width 148px +
      ikon 40px + gap menyisakan ~16px untuk nama/simbol di 320px
      sehingga "BTC / IDR" membungkus jadi 3 baris dan daftar pasar
