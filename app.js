@@ -1751,9 +1751,14 @@ function computeTrade() {
        0,00089286 — selisih 2,9e-9) sehingga jual "Maks" ditolak
        "Koin tidak cukup" padahal angkanya sama. Bila selisihnya
        hanya pembulatan (<= 1e-8 koin + noise float), jepit ke
-       holding yang dimiliki. */
+       holding yang dimiliki. HANYA bila memang punya koinnya:
+       tanpa guard ini, jual debu (mis. 0,000000001 BTC) saat
+       holding 0 dijepit jadi 0 koin lalu lolos sebagai trade valid
+       ("Jual 0 BTC, terima Rp0") dan executeTrade melempar
+       TypeError karena state.holdings[symbol] tidak ada — kotak
+       konfirmasi macet terbuka tanpa pesan apa pun. */
     var eps = Math.max(1e-8, owned * 1e-9);
-    if (raw > owned && raw - owned <= eps) raw = owned;
+    if (owned > 0 && raw > owned && raw - owned <= eps) raw = owned;
     var total = raw * price;
     if (raw > owned) {
       return { ok: false, msg: "Koin tidak cukup. Kamu punya " + fmtCoin(owned) + " " + selectedSymbol + "." };
@@ -1821,6 +1826,17 @@ function executeTrade(res) {
       hideConfirm();
       showError("Koin tidak cukup. Kamu punya " + fmtCoin(ownedNow) + " " + selectedSymbol + ".");
       showToast("Koin tidak cukup — trade dibatalkan.", "error");
+      renderAll();
+      return;
+    }
+    /* Jangan pernah eksekusi jual 0 koin / tanpa holding (lapis
+       kedua dari guard di computeTrade): tanpa ini pending berisi
+       coins 0 lolos ke bawah dan `hs.amount` melempar TypeError
+       karena state.holdings[symbol] tidak ada. */
+    if (res.coins <= 0 || !state.holdings[selectedSymbol]) {
+      hideConfirm();
+      showError("Kamu belum punya " + selectedSymbol + " untuk dijual.");
+      showToast("Kamu belum punya " + selectedSymbol + " untuk dijual.", "error");
       renderAll();
       return;
     }
