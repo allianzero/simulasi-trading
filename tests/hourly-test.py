@@ -3116,6 +3116,40 @@ def test_empty_input_stays_silent(pw):
     finally:
         browser.close()
 
+def test_stat_value_no_break_narrow(pw):
+    # Nilai stat portofolio di layar sempit (<=400px): kolom grid 2 kolom
+    # cuma ~123px di 320px, sementara "Rp 5.000.000" 1.2rem butuh ~139px
+    # — .stat-value punya overflow-wrap: break-word sehingga angka
+    # pecah di tengah ("Rp 5.000.0" / "00") dan "Rp 0 (0,00%)" jadi
+    # 2 baris. Perbaikan: grid portofolio 1 kolom di <=400px (nilai
+    # selebar kartu, ~262px di 320px).
+    price_state = {"live": dict(LIVE)}
+    stat_js = """() => {
+      const out = [];
+      document.querySelectorAll('.portfolio-grid .stat-value').forEach((v) => {
+        const rg = document.createRange(); rg.selectNodeContents(v);
+        const rects = rg.getClientRects();
+        out.push({text: v.textContent.trim(), lines: rects.length,
+          right: Math.round(rects[rects.length - 1].right)});
+      });
+      return out;
+    }"""
+    for w in (320, 360, 390, 420):
+        browser, ctx, page, errors = new_page(pw, {"width": w, "height": 844}, "live", price_state, touch=True)
+        try:
+            enter_guest(page)
+            page.wait_for_timeout(600)
+            m = page.evaluate(stat_js)
+            check(f"stat {w}px: 3 nilai stat terbaca", len(m) == 3, str(m))
+            for s in m:
+                check(f"stat {w}px: {s['text']!r} satu baris (tidak pecah di tengah angka)",
+                      s["lines"] == 1, str(s))
+                check(f"stat {w}px: {s['text']!r} di dalam viewport",
+                      s["right"] <= w + 1, str(s))
+            check(f"0 error JS (stat {w}px)", len(errors) == 0, "; ".join(errors[:3]))
+        finally:
+            browser.close()
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     srv = start_server()
@@ -3136,6 +3170,8 @@ def main():
                 test_position_row_no_overlap_narrow(pw)
             if which in ("marketwrap", "all"):
                 test_market_row_no_wrap_narrow(pw)
+            if which in ("statbreak", "all"):
+                test_stat_value_no_break_narrow(pw)
             if which in ("resetarmed", "all"):
                 test_reset_armed_profile_switch(pw)
             if which in ("profilectx", "all"):
