@@ -2306,6 +2306,25 @@ $("guestNameInput").addEventListener("keydown", function (e) {
 
 /* ---------------- Start ---------------- */
 
+/* Sidik data trade profil aktif — id, kas, holding, posisi futures,
+   dan riwayat trade. Dipakai handler `storage` di bawah: tab lain
+   menyimpan store tiap ~30 detik hanya untuk snapshot grafik
+   portofolio (history), dan tanpa perbandingan ini setiap penyimpanan
+   itu menghapus konteks trade tab ini (input + konfirmasi yang sedang
+   dibuka) padahal kas/holding/posisinya tidak berubah. Pernah: tab B
+   buka konfirmasi beli Rp1.000.000, tab A refresh harga -> snapshot
+   baru tersimpan -> input B kosong dan konfirmasinya tertutup sendiri.
+   Hanya bila sidiknya berubah (trade sungguhan / ganti profil /
+   reset di tab lain) konteks trade dibatalkan. History sengaja TIDAK
+   masuk sidik: snapshot grafik bukan data trade. */
+function profileTradeFingerprint(p) {
+  if (!p) return "";
+  return JSON.stringify({
+    id: p.id, cash: p.cash, holdings: p.holdings,
+    futures: p.futures, trades: p.trades
+  });
+}
+
 /* Sinkronisasi antar-tab: localStorage dipakai BERSAMA oleh semua tab
    di origin yang sama, tapi tiap tab menyimpan `store`/`state` basi di
    memori. Tanpa ini, tab yang dibuka lebih dulu lalu trade lagi akan
@@ -2320,10 +2339,19 @@ $("guestNameInput").addEventListener("keydown", function (e) {
    lama), lalu render ulang — sebelum user sempat menekan apa pun. */
 window.addEventListener("storage", function (e) {
   if (e.key === STORAGE_KEY) {
-    disarmReset();
-    clearTradeContext();
+    var before = profileTradeFingerprint(state);
     store = loadStore();
     state = activeProfile();
+    /* Batalkan konteks trade + status armed Reset HANYA bila data
+       trade profil aktif berubah di tab lain (lihat
+       profileTradeFingerprint). Penyimpanan rutin berupa snapshot
+       grafik portofolio (history) tidak mengubah kas/holding/posisi,
+       jadi input + konfirmasi yang sedang dibuka di tab ini tetap
+       utuh dan masih bisa dieksekusi. */
+    if (profileTradeFingerprint(state) !== before) {
+      disarmReset();
+      clearTradeContext();
+    }
     if (state) {
       $("welcomeOverlay").hidden = true;
     } else if (store.profiles.length === 0) {
