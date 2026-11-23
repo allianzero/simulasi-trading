@@ -952,15 +952,25 @@ function drawChart() {
   ctx.fill();
 
   /* Label waktu sumbu X (awal & akhir): sertakan tanggal bila
-     riwayat merentang lebih dari satu hari kalender. */
+     riwayat merentang lebih dari satu hari kalender. Bila riwayat
+     baru satu titik (profil baru: hanya titik "sekarang"), awal dan
+     akhir adalah waktu yang sama — gambar SATU label saja, di tengah
+     di bawah titiknya; dua label akan tampil sebagai waktu yang sama
+     di kedua ujung ("00.45" ... "00.45"). */
   var xDate = spansDays(hist[0].t, hist[hist.length - 1].t);
-  var xLabels = [fmtAxisTime(hist[0].t, xDate), fmtAxisTime(hist[hist.length - 1].t, xDate)];
+  var xLabels = [fmtAxisTime(hist[0].t, xDate)];
   ctx.fillStyle = "#5e6673";
   ctx.font = "10px 'IBM Plex Mono', monospace";
-  ctx.textAlign = "left";
-  ctx.fillText(xLabels[0], left, h - 8);
-  ctx.textAlign = "right";
-  ctx.fillText(xLabels[1], right, h - 8);
+  if (hist.length === 1) {
+    ctx.textAlign = "center";
+    ctx.fillText(xLabels[0], x(0), h - 8);
+  } else {
+    xLabels.push(fmtAxisTime(hist[hist.length - 1].t, xDate));
+    ctx.textAlign = "left";
+    ctx.fillText(xLabels[0], left, h - 8);
+    ctx.textAlign = "right";
+    ctx.fillText(xLabels[1], right, h - 8);
+  }
 
   /* Titik terakhir + label nilai */
   var lx = x(hist.length - 1);
