@@ -3804,10 +3804,11 @@ def test_xaxis_date_labels(pw):
     # saja. Hook window.__portfolioChart.xLabels /
     # window.__priceChart.xLabels memuat kedua label yang digambar.
     # Tes: riwayat 48 jam -> kedua label portofolio bertanggal & beda
-    # hari; profil baru (riwayat hanya "sekarang") -> kedua label jam
-    # saja; deret harga 24 jam (mock) -> kedua label bertanggal &
-    # beda hari; di HP 390px kedua label bertanggal tidak saling
-    # menumpuk. (Riwayat lama satu hari TIDAK dipakai untuk kasus
+    # hari; profil baru (riwayat hanya "sekarang", satu titik) -> SATU
+    # label jam saja di tengah (bukan dua label jam yang sama di kedua
+    # ujung — regresi run 61); deret harga 24 jam (mock) -> kedua
+    # label bertanggal & beda hari; di HP 390px kedua label bertanggal
+    # tidak saling menumpuk. (Riwayat lama satu hari TIDAK dipakai untuk kasus
     # jam-saja: snapshotPortfolio() selalu menempel titik "sekarang"
     # ke riwayat yang ujungnya sudah >60 detik, jadi riwayat lama
     # pasti merentang ke hari ini — profil baru adalah kasus
@@ -3897,12 +3898,13 @@ def test_xaxis_date_labels(pw):
         page.click("#refreshBtn")
         page.wait_for_timeout(1500)
         page.wait_for_function(
-            "() => window.__portfolioChart && window.__portfolioChart.xLabels && window.__portfolioChart.xLabels.length === 2",
+            "() => window.__portfolioChart && window.__portfolioChart.xLabels && window.__portfolioChart.xLabels.length === 1",
             timeout=10000)
         pl2 = page.evaluate("() => window.__portfolioChart.xLabels")
-        check("xaxis: label portofolio profil baru terbaca (2 label)", len(pl2) == 2, str(pl2))
-        check("xaxis: kedua label portofolio profil baru jam saja (tanpa tanggal)",
-              is_clock(pl2[0]) and is_clock(pl2[1]), str(pl2))
+        check("xaxis: label portofolio profil baru terbaca (1 label, bukan duplikat)",
+              len(pl2) == 1, str(pl2))
+        check("xaxis: label portofolio profil baru jam saja (tanpa tanggal)",
+              is_clock(pl2[0]), str(pl2))
         check("0 error JS (xaxis desktop)", len(errors) == 0, "; ".join(errors[:3]))
     finally:
         browser.close()
@@ -3932,6 +3934,81 @@ def test_xaxis_date_labels(pw):
         check("xaxis 390px: label bertanggal tidak menumpuk",
               62 + m["w0"] < (m["cw"] - 10) - m["w1"], str(m))
         check("0 error JS (xaxis 390px)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
+
+def test_single_point_x_label(pw):
+    """Regresi (run 61): grafik portofolio dengan SATU titik (profil
+    baru) menggambar label waktu yang sama dua kali di kedua ujung
+    sumbu X ("00.48" ... "00.48") — awal dan akhir riwayat adalah
+    waktu yang sama, jadi dua label itu duplikat. Perbaikan: satu
+    titik -> SATU label, digambar di tengah di bawah titiknya.
+    Tes: hook xLabels berisi 1 label jam saja; sampling piksel lajur
+    bawah kanvas (tempat label X digambar): ada tinta di zona tengah,
+    TIDAK ada tinta di zona kiri/kanan. Pada kode lama, zona kiri dan
+    kanan berisi label sehingga tes ini GAGAL; pada kode baru LULUS."""
+    browser = pw.chromium.launch()
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text)
+            if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+
+    def cg(route):
+        url = route.request.url
+        if "simple/price" in url:
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(LIVE))
+        elif "market_chart" in url:
+            mock_chart(route)
+        else:
+            route.abort()
+
+    page.route("**api.coingecko.com/**", cg)
+    page.route("**/data-api.binance.vision/**", lambda r: r.abort())
+    page.route("**/api.binance.com/**", lambda r: r.abort())
+    try:
+        enter_guest(page)
+        page.wait_for_function(
+            "() => window.__portfolioChart && window.__portfolioChart.points.length === 1",
+            timeout=10000)
+        pc = page.evaluate("() => window.__portfolioChart")
+        check("single-x: grafik portofolio profil baru 1 titik",
+              len(pc["points"]) == 1, str(pc["points"]))
+        check("single-x: hook xLabels berisi 1 label (bukan duplikat)",
+              len(pc["xLabels"]) == 1, str(pc["xLabels"]))
+        zones = page.evaluate("""() => {
+          const c = document.getElementById('chart');
+          const ctx = c.getContext('2d');
+          const W = c.width, H = c.height;
+          const dpr = window.devicePixelRatio || 1;
+          // Lajur label X: baseline h-8, font 10px -> ambil baris
+          // (H/dpr - 20) s.d. (H/dpr - 6) dalam piksel CSS.
+          const y0 = Math.floor((H / dpr - 20) * dpr);
+          const y1 = Math.floor((H / dpr - 6) * dpr);
+          const d = ctx.getImageData(0, y0, W, y1 - y0).data;
+          const ink = {left: 0, center: 0, right: 0};
+          const hh = y1 - y0;
+          for (let y = 0; y < hh; y++) {
+            for (let x = 0; x < W; x++) {
+              if (d[(y * W + x) * 4 + 3] > 0) {
+                if (x < W * 0.25) ink.left++;
+                else if (x > W * 0.75) ink.right++;
+                else if (x > W * 0.4 && x < W * 0.6) ink.center++;
+              }
+            }
+          }
+          return ink;
+        }""")
+        check("single-x: tinta label X ada di tengah kanvas",
+              zones["center"] > 0, str(zones))
+        check("single-x: TIDAK ada label X di ujung kiri kanvas",
+              zones["left"] == 0, str(zones))
+        check("single-x: TIDAK ada label X di ujung kanan kanvas",
+              zones["right"] == 0, str(zones))
+        check("0 error JS (single-x)", len(errors) == 0, "; ".join(errors[:3]))
     finally:
         browser.close()
 
@@ -4148,7 +4225,7 @@ GROUPS = [
     ("chartlabelorder", [test_chart_label_draw_order]),
     ("charttime", [test_portfolio_chart_time_axis]),
     ("yaxisunit", [test_yaxis_single_unit]),
-    ("xaxisdate", [test_xaxis_date_labels]),
+    ("xaxisdate", [test_xaxis_date_labels, test_single_point_x_label]),
     ("newprofile", [test_new_profile_chart_seeded]),
     ("emptyinput", [test_empty_input_stays_silent]),
     ("menushort", [test_profile_menu_short_viewport]),
