@@ -3793,6 +3793,73 @@ def test_yaxis_single_unit(pw):
     finally:
         browser.close()
 
+def test_chart_liq_line_axis(pw):
+    # Garis likuidasi ikut dihitung di min/max sumbu grafik harga 24j:
+    # Long 1x -> liq = entry x (1 - 1/1) = Rp0 meregangkan sumbu jadi
+    # Rp-0,17 M .. Rp1,29 M (label bawah negatif!) sehingga garis
+    # harga 24j (Rp1,10-1,12 M) terjepit jadi pita datar; tambah Short
+    # 1x (liq = 2x entry = Rp2,24 M) sumbu jadi Rp-0,34 M .. Rp2,58 M.
+    # Terbukti probe /tmp/probe-liq1x-chart.py. Perbaikan: skala sumbu
+    # hanya dari deret 24 jam (+ mark); garis di luar rentang dipotong
+    # di tepi plot, label tetap menampilkan harga sebenarnya.
+    # Tes: baseline sumbu ~Rp1,09-1,13 M; setelah Long 1x + Short 1x
+    # sumbu tetap di situ (yMin > Rp1 M, yMax < Rp1,3 M), tanpa label
+    # negatif; garis liq Rp0 + Rp2,24 M tetap tercatat di hook; kartu
+    # posisi tetap menampilkan harga likuidasi.
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        enter_guest(page)
+        page.wait_for_function("() => window.__priceChart && window.__priceChart.points > 10",
+                               timeout=10000)
+        base = page.evaluate("() => ({yMin: window.__priceChart.yMin, yMax: window.__priceChart.yMax, yLabels: window.__priceChart.yLabels})")
+        check("liq-axis: baseline sumbu di sekitar deret (yMin > Rp1 M)",
+              base["yMin"] > 1000000000, str(base))
+        check("liq-axis: baseline sumbu sempit (yMax < Rp1,3 M)",
+              base["yMax"] < 1300000000, str(base))
+        # Long 1x, margin Rp100.000 -> liq Rp0
+        page.locator("#futLeverage").evaluate(
+            "el => { el.value='1'; el.dispatchEvent(new Event('input',{bubbles:true}));"
+            " el.dispatchEvent(new Event('change',{bubbles:true})); }")
+        page.fill("#futMarginInput", "100000")
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        page.click("#futConfirmYes")
+        page.wait_for_timeout(800)
+        after1 = page.evaluate("() => window.__priceChart")
+        check("liq-axis: Long 1x terbuka, garis liq Rp0 tercatat",
+              any(l["type"] == "liq" and l["price"] == 0 for l in after1["lines"]),
+              str(after1["lines"]))
+        check("liq-axis: sumbu TIDAK meregang ke Rp0 setelah Long 1x (yMin > Rp1 M)",
+              after1["yMin"] > 1000000000,
+              "yMin=%s yMax=%s labels=%s" % (after1["yMin"], after1["yMax"], after1.get("yLabels")))
+        check("liq-axis: tidak ada label sumbu negatif setelah Long 1x",
+              not any(l.startswith("Rp-") for l in after1.get("yLabels", [])),
+              str(after1.get("yLabels")))
+        check("liq-axis: kartu posisi tetap tampilkan likuidasi Rp 0",
+              "Rp 0" in page.text_content("#futPositions").replace("\u00a0", " "),
+              page.text_content("#futPositions")[:200])
+        # Short 1x, margin Rp50.000 -> liq Rp2.240.000.000
+        page.click("#futShort")
+        page.locator("#futLeverage").evaluate(
+            "el => { el.value='1'; el.dispatchEvent(new Event('input',{bubbles:true}));"
+            " el.dispatchEvent(new Event('change',{bubbles:true})); }")
+        page.fill("#futMarginInput", "50000")
+        page.click("#futBtn")
+        page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+        page.click("#futConfirmYes")
+        page.wait_for_timeout(800)
+        after2 = page.evaluate("() => window.__priceChart")
+        check("liq-axis: Short 1x terbuka, garis liq Rp2,24 M tercatat",
+              any(l["type"] == "liq" and l["price"] == 2240000000 for l in after2["lines"]),
+              str(after2["lines"]))
+        check("liq-axis: sumbu TIDAK meregang ke Rp2,24 M setelah Short 1x (yMax < Rp1,3 M)",
+              after2["yMax"] < 1300000000,
+              "yMin=%s yMax=%s labels=%s" % (after2["yMin"], after2["yMax"], after2.get("yLabels")))
+        check("0 error JS (liq-axis)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_xaxis_date_labels(pw):
     # Label waktu sumbu X grafik tidak menyebut tanggal: grafik
     # portofolio memakai jam saja di kedua ujung (fmtClock) — riwayat
@@ -4224,7 +4291,7 @@ GROUPS = [
                       test_chart_refetch_fail_keeps_live_series]),
     ("chartlabelorder", [test_chart_label_draw_order]),
     ("charttime", [test_portfolio_chart_time_axis]),
-    ("yaxisunit", [test_yaxis_single_unit]),
+    ("yaxisunit", [test_yaxis_single_unit, test_chart_liq_line_axis]),
     ("xaxisdate", [test_xaxis_date_labels, test_single_point_x_label]),
     ("newprofile", [test_new_profile_chart_seeded]),
     ("emptyinput", [test_empty_input_stays_silent]),
