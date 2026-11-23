@@ -1237,8 +1237,15 @@ function drawPriceChart() {
     return;
   }
 
+  /* Skala sumbu HANYA dari deret harga 24 jam (+ mark = harga saat
+     ini). Garis entry/likuidasi JANGAN ikut: liq Long 1x = Rp0 dan
+     liq Short 1x = 2x entry meregangkan sumbu sampai Rp-0,17 M ..
+     Rp2,58 M sehingga garis harga 24 jam (rentang ~Rp1,10-1,12 M)
+     terjepit jadi pita datar di tepi grafik. Posisi lama yang
+     entry-nya jauh di luar rentang 24 jam pun tidak boleh meregangkan
+     sumbu. Garis di luar rentang dipotong di tepi plot (lihat bawah). */
   var values = pts.map(function (p) { return p.v; });
-  lines.forEach(function (l) { values.push(l.price); });
+  if (mark != null) values.push(mark);
   var min = Math.min.apply(null, values);
   var max = Math.max.apply(null, values);
   if (max === min) { max = min + 1; }
@@ -1271,7 +1278,11 @@ function drawPriceChart() {
     ctx.fillText(yLab, 4, gy + 3);
   }
   /* Hook label sumbu Y untuk pengujian otomatis (bukan bagian UI). */
-  if (window.__priceChart) window.__priceChart.yLabels = yLabels;
+  if (window.__priceChart) {
+    window.__priceChart.yLabels = yLabels;
+    window.__priceChart.yMin = min;
+    window.__priceChart.yMax = max;
+  }
 
   /* Garis harga + isi gradien — digambar SEBELUM garis entry /
      likuidasi / mark + labelnya, supaya garis harga tidak menimpa
@@ -1310,6 +1321,11 @@ function drawPriceChart() {
   var usedLabelY = [];
   lines.forEach(function (l) {
     var ly = y(l.price);
+    /* Garis di luar rentang sumbu dipotong di tepi plot, bukan
+       digambar di luar kanvas — label tetap menampilkan harga
+       sebenarnya, jadi info entry/likuidasi tidak hilang. */
+    if (ly < top) ly = top;
+    if (ly > bottom) ly = bottom;
     ctx.strokeStyle = l.color;
     ctx.globalAlpha = l.type === "mark" ? 0.55 : 0.85;
     ctx.setLineDash(l.dashed ? [5, 4] : []);
