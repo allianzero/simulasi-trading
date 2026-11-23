@@ -3860,6 +3860,77 @@ def test_chart_liq_line_axis(pw):
     finally:
         browser.close()
 
+def test_chart_edge_label_no_overlap(pw):
+    # Label garis yang terpotong di tepi plot menumpuk: garis likuidasi
+    # Short 1x (= 2x entry) terpotong di tepi ATAS, jadi labelnya mulai
+    # dari labelY = 2. Logika geser label hanya menggeser ke ATAS
+    # (labelY -= 16, dijepit Math.max(2, ...)) sehingga label kedua
+    # yang juga mulai di 2 tidak bisa bergerak: dua label "Likuidasi
+    # Rp2.240.000.000" digambar di y yang sama persis (probe
+    # /tmp/probe-edge-labels.py: 3x fillText y=13), dan dengan 2 Long
+    # 1x tambahan kedua label "Entry LONG 1x" ikut menumpuk di y=13 —
+    # 4 label jadi satu gumpalan tak terbaca di tepi atas grafik.
+    # Perbaikan: bila geser ke atas sudah mentok di 2 dan masih
+    # bertabrakan, geser ke BAWAH (dibatasi bottom - 15 agar tidak
+    # menabrak label sumbu X).
+    # Tes: patch fillText + clearRect (hitung frame), buka 2x Short 1x
+    # + 2x Long 1x, lalu periksa label garis pada frame gambar
+    # terakhir: harus 8 label dan jarak antar label >= 15px (tinggi
+    # pill), 0 error JS.
+    price_state = {"live": dict(LIVE)}
+    browser, ctx, page, errors = new_page(pw, {"width": 1280, "height": 800}, "live", price_state)
+    try:
+        page.add_init_script("""
+window.__fillLog = [];
+window.__fillFrame = 0;
+const _cr = CanvasRenderingContext2D.prototype.clearRect;
+CanvasRenderingContext2D.prototype.clearRect = function () {
+  window.__fillFrame++;
+  return _cr.apply(this, arguments);
+};
+const _ft = CanvasRenderingContext2D.prototype.fillText;
+CanvasRenderingContext2D.prototype.fillText = function (text, x, y) {
+  if (typeof text === 'string' && /^(Entry|Likuidasi|Mark) /.test(text)) {
+    window.__fillLog.push({frame: window.__fillFrame, text: text, y: y});
+  }
+  return _ft.call(this, text, x, y);
+};
+""")
+        enter_guest(page)
+        page.wait_for_function("() => window.__priceChart && window.__priceChart.points > 10",
+                               timeout=10000)
+        def open_fut(direction, leverage, margin):
+            page.click("#futShort" if direction == "short" else "#futLong")
+            page.locator("#futLeverage").evaluate(
+                "el => { el.value='%s'; el.dispatchEvent(new Event('input',{bubbles:true}));"
+                " el.dispatchEvent(new Event('change',{bubbles:true})); }" % leverage)
+            page.fill("#futMarginInput", str(margin))
+            page.click("#futBtn")
+            page.wait_for_selector("#futConfirmBox:not([hidden])", timeout=5000)
+            page.click("#futConfirmYes")
+            page.wait_for_timeout(800)
+        open_fut("short", "1", 50000)
+        open_fut("short", "1", 50000)
+        open_fut("long", "1", 50000)
+        open_fut("long", "1", 50000)
+        page.wait_for_function("() => window.__priceChart && window.__priceChart.lines.length === 8",
+                               timeout=10000)
+        page.wait_for_timeout(500)
+        labs = page.evaluate("""() => {
+          const log = window.__fillLog;
+          const last = Math.max.apply(null, log.map(l => l.frame));
+          return log.filter(l => l.frame === last);
+        }""")
+        ys = sorted(l["y"] for l in labs)
+        check("edge-label: frame terakhir punya 8 label garis (4 entry + 4 liq)",
+              len(labs) == 8, str(labs))
+        check("edge-label: tidak ada dua label dalam 1 frame yang berjarak <15px",
+              all(ys[i + 1] - ys[i] >= 15 for i in range(len(ys) - 1)),
+              "y=%s" % (ys,))
+        check("0 error JS (edge-label)", len(errors) == 0, "; ".join(errors[:3]))
+    finally:
+        browser.close()
+
 def test_xaxis_date_labels(pw):
     # Label waktu sumbu X grafik tidak menyebut tanggal: grafik
     # portofolio memakai jam saja di kedua ujung (fmtClock) — riwayat
@@ -4291,7 +4362,8 @@ GROUPS = [
                       test_chart_refetch_fail_keeps_live_series]),
     ("chartlabelorder", [test_chart_label_draw_order]),
     ("charttime", [test_portfolio_chart_time_axis]),
-    ("yaxisunit", [test_yaxis_single_unit, test_chart_liq_line_axis]),
+    ("yaxisunit", [test_yaxis_single_unit, test_chart_liq_line_axis,
+               test_chart_edge_label_no_overlap]),
     ("xaxisdate", [test_xaxis_date_labels, test_single_point_x_label]),
     ("newprofile", [test_new_profile_chart_seeded]),
     ("emptyinput", [test_empty_input_stays_silent]),

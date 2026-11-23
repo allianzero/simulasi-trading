@@ -1334,9 +1334,21 @@ function drawPriceChart() {
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
     var labelY = Math.max(2, ly - 18);
-    var guard = 0;
-    while (usedLabelY.some(function (uy) { return Math.abs(uy - labelY) < 15; }) && guard < 6) {
-      labelY = Math.max(2, labelY - 16);
+    var guard = 0, down = false;
+    while (usedLabelY.some(function (uy) { return Math.abs(uy - labelY) < 15; }) && guard < 16) {
+      if (!down && labelY > 2) {
+        /* Geser ke atas seperti biasa; bila sudah mentok di tepi atas
+           (labelY = 2, mis. dua garis likuidasi Short 1x yang sama-sama
+           terpotong di tepi) dan masih bertabrakan, arah dibalik ke
+           bawah supaya label tidak menumpuk di satu titik. */
+        labelY = Math.max(2, labelY - 16);
+        if (labelY <= 2) down = true;
+      } else {
+        /* Tepi atas penuh: geser ke bawah, tetap di atas label sumbu X
+           (batas bawah = bottom - 15). Sekali ke bawah, tetap ke bawah
+           (tanpa ini label berosilasi 2 <-> 18 tanpa pernah bebas). */
+        labelY = Math.min(bottom - 15, labelY + 16);
+      }
       guard++;
     }
     usedLabelY.push(labelY);
